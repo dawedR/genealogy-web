@@ -144,3 +144,108 @@ def test_ancestor_generation_limit_is_validated():
         )
 
     assert response.status_code == 422
+
+from pathlib import Path
+
+
+GEDCOM_FIXTURE = Path(
+    "tests/fixtures/gedcom-edge-cases.ged"
+)
+
+
+def test_upload_gedcom_replaces_active_genealogy():
+    with make_client() as client:
+        before = client.get("/health")
+
+        assert before.json()["persons_count"] == 3
+
+        with GEDCOM_FIXTURE.open("rb") as gedcom_file:
+            response = client.post(
+                "/imports",
+                files={
+                    "file": (
+                        "edge-cases.ged",
+                        gedcom_file,
+                        "application/octet-stream",
+                    )
+                },
+            )
+
+        assert response.status_code == 200
+
+        report = response.json()
+
+        assert report["filename"] == "edge-cases.ged"
+        assert report["persons_count"] == 3
+        assert report["families_count"] == 1
+        assert report["events_count"] == 11
+        assert report["places_count"] == 2
+        assert report["warnings"] == []
+        assert report["ignored_tags"] == [
+            {
+                "tag": "_CUSTOM",
+                "record_id": "@I1@",
+            }
+        ]
+
+        person = client.get("/people/@I2@")
+
+        assert person.status_code == 200
+        assert person.json()["given_names"] == "Jean"
+        assert person.json()["occupations"] == [
+            "Cordonnier"
+        ]
+
+
+def test_uploaded_genealogy_can_be_searched():
+    with make_client() as client:
+        with GEDCOM_FIXTURE.open("rb") as gedcom_file:
+            response = client.post(
+                "/imports",
+                files={
+                    "file": (
+                        "edge-cases.ged",
+                        gedcom_file,
+                        "application/octet-stream",
+                    )
+                },
+            )
+
+        assert response.status_code == 200
+
+        response = client.get(
+            "/people",
+            params={"q": "eleonore"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()[0]["id"] == "@I1@"
+
+
+def test_failed_import_keeps_previous_genealogy():
+    invalid_gedcom = b"This is not a GEDCOM file."
+
+    with make_client() as client:
+        before = client.get("/health").json()
+
+        response = client.post(
+            "/imports",
+            files={
+                "file": (
+                    "broken.ged",
+                    invalid_gedcom,
+                    "application/octet-stream",
+                )
+            },
+        )
+
+        assert response.status_code == 400
+
+        after = client.get("/health").json()
+
+        assert after == before
+
+        person = client.get("/people/@I1@")
+
+        assert person.status_code == 200
+        assert person.json()["given_names"] == "Jean"

@@ -1,16 +1,29 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import os
+import tempfile
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 
 from src.api.schemas import (
     AncestorResponse,
     HealthResponse,
+    IgnoredTagResponse,
+    ImportReportResponse,
     PersonResponse,
 )
-from src.domain.models import Genealogy, Person
+from src.domain.models import Genealogy, ImportReport, Person
+from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
 from src.services.search import search_people
 
@@ -40,6 +53,57 @@ def create_app(genealogy: Genealogy | None = None) -> FastAPI:
             status="ok",
             persons_count=len(current.persons),
             families_count=len(current.families),
+        )
+
+    @app.post(
+        "/imports",
+        response_model=ImportReportResponse,
+    )
+    async def upload_gedcom(
+        request: Request,
+        file: UploadFile = File(...),
+    ) -> ImportReportResponse:
+        filename = file.filename or "upload.ged"
+
+        suffix = Path(filename).suffix or ".ged"
+
+        temp_path: str | None = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                suffix=suffix,
+                delete=False,
+            ) as temp_file:
+                temp_path = temp_file.name
+
+                while chunk := await file.read(1024 * 1024):
+                    temp_file.write(chunk)
+
+            genealogy, report = import_gedcom(temp_path)
+
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"GEDCOM import failed: {exc}",
+            ) from exc
+
+        finally:
+            await file.close()
+
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except FileNotFoundError:
+                    pass
+
+        # Atomic from the application's point of view:
+        # only replace the current genealogy after a successful import.
+        request.app.state.genealogy = genealogy
+
+        return _import_report_response(
+            filename=filename,
+            report=report,
         )
 
     @app.get(
@@ -129,6 +193,27 @@ def _person_response(person: Person) -> PersonResponse:
         surname=person.surname,
         sex=person.sex.value,
         occupations=person.occupations,
+    )
+
+
+def _import_report_response(
+    filename: str,
+    report: ImportReport,
+) -> ImportReportResponse:
+    return ImportReportResponse(
+        filename=filename,
+        persons_count=report.persons_count,
+        families_count=report.families_count,
+        events_count=report.events_count,
+        places_count=report.places_count,
+        warnings=report.warnings,
+        ignored_tags=[
+            IgnoredTagResponse(
+                tag=item.tag,
+                record_id=item.record_id,
+            )
+            for item in report.ignored_tags
+        ],
     )
 
 

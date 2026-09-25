@@ -6,6 +6,7 @@ Requires-Python: >=3.12
 Requires-Dist: ged4py
 Requires-Dist: fastapi<0.142,>=0.141
 Requires-Dist: uvicorn<0.55,>=0.54
+Requires-Dist: python-multipart<0.1,>=0.0.20
 Provides-Extra: dev
 Requires-Dist: httpx<0.29,>=0.28; extra == "dev"
 Requires-Dist: pytest<9,>=7.4; extra == "dev"

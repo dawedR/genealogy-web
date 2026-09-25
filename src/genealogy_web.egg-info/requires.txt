@@ -1,6 +1,7 @@
 ged4py
 fastapi<0.142,>=0.141
 uvicorn<0.55,>=0.54
+python-multipart<0.1,>=0.0.20
 
 [dev]
 httpx<0.29,>=0.28
