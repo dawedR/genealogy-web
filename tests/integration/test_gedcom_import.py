@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.domain.models import Sex
+from src.domain.models import IgnoredTag, Sex
 from src.gedcom.importer import import_gedcom
 
 
@@ -76,3 +76,8 @@ def test_import_edge_cases():
         "Łódź, Pologne",
         "Écully, France",
     }
+
+    assert report.warnings == []
+    assert report.ignored_tags == [
+        IgnoredTag(tag="_CUSTOM", record_id="@I1@")
+    ]

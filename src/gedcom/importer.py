@@ -9,6 +9,7 @@ from src.domain.models import (
     EventDate,
     Family,
     Genealogy,
+    IgnoredTag,
     ImportReport,
     Person,
     Place,
@@ -20,12 +21,22 @@ def import_gedcom(path: str | Path) -> tuple[Genealogy, ImportReport]:
     """Import a GEDCOM file into the domain model."""
 
     genealogy = Genealogy()
+    ignored_tags: list[IgnoredTag] = []
 
     with GedcomReader(str(path)) as parser:
         for record in parser.records0():
             if record.tag == "INDI":
                 person = _import_person(record)
                 genealogy.persons[person.id] = person
+
+                for sub_record in record.sub_records:
+                    if sub_record.tag.startswith("_"):
+                        ignored_tags.append(
+                            IgnoredTag(
+                                tag=sub_record.tag,
+                                record_id=record.xref_id,
+                            )
+                        )
 
             elif record.tag == "FAM":
                 family = _import_family(record)
@@ -53,6 +64,7 @@ def import_gedcom(path: str | Path) -> tuple[Genealogy, ImportReport]:
         families_count=len(genealogy.families),
         events_count=len(genealogy.events),
         places_count=len(genealogy.places),
+        ignored_tags=ignored_tags,
     )
 
     return genealogy, report
@@ -68,14 +80,17 @@ def _import_person(record) -> Person:
         sex=_parse_sex(_value(record, "SEX")),
     )
 
-    for tag in ("BIRT", "BAPM", "DEAT", "BURI", "CREM"):
+    for occupation in record.sub_tags("OCCU"):
+        if occupation.value:
+            person.occupations.append(str(occupation.value))
+
+    for tag in ("BIRT", "BAPM", "NATU", "DEAT", "BURI", "CREM"):
         event_record = record.sub_tag(tag)
 
         if event_record is not None:
             person.events.append(_import_event(event_record, tag))
 
     return person
-
 
 def _import_family(record) -> Family:
     family = Family(id=record.xref_id)
@@ -92,10 +107,11 @@ def _import_family(record) -> Family:
     for child in record.sub_tags("CHIL"):
         family.children.append(child.xref_id)
 
-    marriage = record.sub_tag("MARR")
+    for tag in ("MARR", "DIV", "EVEN"):
+        event_record = record.sub_tag(tag)
 
-    if marriage is not None:
-        family.events.append(_import_event(marriage, "MARR"))
+        if event_record is not None:
+            family.events.append(_import_event(event_record, tag))
 
     return family
 
@@ -103,13 +119,14 @@ def _import_family(record) -> Family:
 def _import_event(record, event_type: str) -> Event:
     date_value = _value(record, "DATE")
     place_value = _value(record, "PLAC")
+    detail = _value(record, "TYPE")
 
     return Event(
         type=event_type,
+        detail=detail,
         date=EventDate(value=date_value) if date_value else None,
         place=Place(original_name=place_value) if place_value else None,
     )
-
 
 def _value(record, tag: str) -> str | None:
     sub_record = record.sub_tag(tag)

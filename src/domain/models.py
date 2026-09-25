@@ -25,6 +25,7 @@ class Place:
 @dataclass
 class Event:
     type: str
+    detail: str | None = None
     date: EventDate | None = None
     place: Place | None = None
 
@@ -35,8 +36,8 @@ class Person:
     given_names: str = ""
     surname: str = ""
     sex: Sex = Sex.UNKNOWN
+    occupations: list[str] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
-
 
 @dataclass
 class Family:
@@ -53,6 +54,10 @@ class Genealogy:
     events: list[Event] = field(default_factory=list)
     places: list[Place] = field(default_factory=list)
 
+@dataclass(frozen=True)
+class IgnoredTag:
+    tag: str
+    record_id: str | None = None
 
 @dataclass
 class ImportReport:
@@ -61,3 +66,4 @@ class ImportReport:
     events_count: int = 0
     places_count: int = 0
     warnings: list[str] = field(default_factory=list)
+    ignored_tags: list[IgnoredTag] = field(default_factory=list)
