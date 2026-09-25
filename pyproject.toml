@@ -1,0 +1,19 @@
+[project]
+name = "genealogy-web"
+version = "0.1.0"
+description = "Genealogy web application"
+requires-python = ">=3.12"
+dependencies = [
+    "ged4py",
+    "fastapi>=0.141,<0.142",
+    "uvicorn>=0.54,<0.55",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<0.29",
+    "pytest>=7.4,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
