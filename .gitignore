@@ -1,5 +1,6 @@
 # Donnees genealogiques
 *.ged
+!tests/fixtures/*.ged
 *.gwb
 
 # Secrets / configuration locale
