@@ -1,0 +1,34 @@
+# Donnees genealogiques
+*.ged
+*.gwb
+
+# Secrets / configuration locale
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node / JavaScript
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# Fichiers temporaires
+*.swp
+*.swo
+*~
+*.bak
+
+# Logs
+*.log
+
+# Bases locales generees
+*.db
+*.sqlite
+*.sqlite3
