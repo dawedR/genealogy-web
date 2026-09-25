@@ -42,6 +42,15 @@ def test_import_edge_cases():
     assert burial.place is not None
     assert burial.place.original_name == "Łódź, Pologne"
 
+    assert jean.occupations == ["Cordonnier"]
+
+    naturalization = next(
+        event for event in jean.events
+        if event.type == "NATU"
+    )
+    assert naturalization.date is not None
+    assert naturalization.date.value == "17 JUL 1946"
+
     # FROM ... TO ...
     marie = genealogy.persons["@I3@"]
     birth = next(event for event in marie.events if event.type == "BIRT")
@@ -65,11 +74,18 @@ def test_import_edge_cases():
     assert marriage.place is not None
     assert marriage.place.original_name == "Écully, France"
 
+    divorce = next(event for event in family.events if event.type == "DIV")
+    assert divorce.date is None
+    assert divorce.place is None
+
+    unmarried = next(event for event in family.events if event.type == "EVEN")
+    assert unmarried.detail == "unmarried"
+
     # Import report
     assert report.persons_count == 3
     assert report.families_count == 1
 
-    assert report.events_count == 8
+    assert report.events_count == 11
     assert report.places_count == 2
 
     assert {place.original_name for place in genealogy.places} == {
