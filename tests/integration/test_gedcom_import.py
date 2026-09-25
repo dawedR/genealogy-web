@@ -36,11 +36,23 @@ def test_import_edge_cases():
     assert death.date is not None
     assert death.date.value == "BETWEEN 1970 AND 1975"
 
+    burial = next(event for event in eleonore.events if event.type == "BURI")
+    assert burial.date is not None
+    assert burial.date.value == "1980"
+    assert burial.place is not None
+    assert burial.place.original_name == "Łódź, Pologne"
+
     # FROM ... TO ...
     marie = genealogy.persons["@I3@"]
     birth = next(event for event in marie.events if event.type == "BIRT")
     assert birth.date is not None
     assert birth.date.value == "FROM 1902 TO 1904"
+
+    baptism = next(event for event in marie.events if event.type == "BAPM")
+    assert baptism.date is not None
+    assert baptism.date.value == "1904"
+    assert baptism.place is not None
+    assert baptism.place.original_name == "Écully, France"
 
     # Family relationships
     family = genealogy.families["@F1@"]
@@ -56,3 +68,11 @@ def test_import_edge_cases():
     # Import report
     assert report.persons_count == 3
     assert report.families_count == 1
+
+    assert report.events_count == 8
+    assert report.places_count == 2
+
+    assert {place.original_name for place in genealogy.places} == {
+        "Łódź, Pologne",
+        "Écully, France",
+    }

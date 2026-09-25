@@ -37,10 +37,17 @@ def import_gedcom(path: str | Path) -> tuple[Genealogy, ImportReport]:
     for family in genealogy.families.values():
         genealogy.events.extend(family.events)
 
+    places_by_name: dict[str, Place] = {}
+
     for event in genealogy.events:
         if event.place is not None:
-            genealogy.places.append(event.place)
+            places_by_name.setdefault(
+                event.place.original_name,
+                event.place,
+            )
 
+    genealogy.places = list(places_by_name.values())
+    
     report = ImportReport(
         persons_count=len(genealogy.persons),
         families_count=len(genealogy.families),
@@ -61,7 +68,7 @@ def _import_person(record) -> Person:
         sex=_parse_sex(_value(record, "SEX")),
     )
 
-    for tag in ("BIRT", "DEAT"):
+    for tag in ("BIRT", "BAPM", "DEAT", "BURI", "CREM"):
         event_record = record.sub_tag(tag)
 
         if event_record is not None:

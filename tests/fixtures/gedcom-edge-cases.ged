@@ -12,6 +12,9 @@
 2 PLAC Łódź, Pologne
 1 DEAT
 2 DATE BEF 1980
+1 BURI
+2 DATE 1980
+2 PLAC Łódź, Pologne
 1 _CUSTOM Ceci est une extension inconnue
 0 @I2@ INDI
 1 NAME Jean /DUPONT/
@@ -25,6 +28,9 @@
 1 SEX F
 1 BIRT
 2 DATE FROM 1902 TO 1904
+1 BAPM
+2 DATE 1904
+2 PLAC Écully, France
 0 @F1@ FAM
 1 HUSB @I2@
 1 WIFE @I1@
