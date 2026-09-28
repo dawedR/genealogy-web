@@ -34,3 +34,8 @@ class ImportReportResponse(BaseModel):
     places_count: int
     warnings: list[str]
     ignored_tags: list[IgnoredTagResponse]
+
+class SosaOccurrenceResponse(BaseModel):
+    sosa: int
+    generation: int
+    person: PersonResponse | None

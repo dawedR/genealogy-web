@@ -1,3 +1,5 @@
+from urllib import response
+
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
@@ -268,6 +270,8 @@ def test_index_page():
     assert 'id="search-form"' in response.text
     assert 'id="warnings-section"' in response.text
     assert 'id="ignored-tags-section"' in response.text
+    assert 'id="fan-opening"' in response.text
+    assert 'id="fan-chart"' in response.text
 
 
 def test_static_javascript():
@@ -277,6 +281,9 @@ def test_static_javascript():
     assert response.status_code == 200
     assert "loadAncestry" in response.text
     assert "renderImportDetails" in response.text
+    assert "createFanGeometry" in response.text
+    assert "setFanViewBox" in response.text
+    assert "labelTransform" in response.text
 
 def test_search_uploaded_people_by_birth_year():
     with make_client() as client:
@@ -307,3 +314,81 @@ def test_search_uploaded_people_by_birth_year():
         assert data[0]["id"] == "@I2@"
         assert data[0]["birth_date"] == "1900"
         assert data[0]["birth_year"] == "1900"
+
+def test_get_sosa_ancestry():
+    genealogy = make_genealogy()
+
+    genealogy.families["@F1@"].father_id = "@I1@"
+    genealogy.families["@F1@"].mother_id = "@I2@"
+
+    with TestClient(create_app(genealogy)) as client:
+        response = client.get(
+            "/people/@I3@/sosa",
+            params={"generations": 1},
+        )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert [
+        (
+            item["sosa"],
+            item["generation"],
+            (
+                item["person"]["id"]
+                if item["person"] is not None
+                else None
+            ),
+        )
+        for item in data
+    ] == [
+        (1, 0, "@I3@"),
+        (2, 1, "@I1@"),
+        (3, 1, "@I2@"),
+    ]
+
+
+def test_sosa_keeps_unknown_positions():
+    genealogy = make_genealogy()
+
+    genealogy.families["@F1@"].father_id = "@I1@"
+    genealogy.families["@F1@"].mother_id = "@I2@"
+
+    with TestClient(create_app(genealogy)) as client:
+        response = client.get(
+            "/people/@I3@/sosa",
+            params={"generations": 2},
+        )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 7
+
+    by_sosa = {
+        item["sosa"]: item
+        for item in data
+    }
+
+    assert by_sosa[4]["person"] is None
+    assert by_sosa[5]["person"] is None
+    assert by_sosa[6]["person"] is None
+    assert by_sosa[7]["person"] is None
+
+
+def test_sosa_generation_limit():
+    with make_client() as client:
+        too_small = client.get(
+            "/people/@I3@/sosa",
+            params={"generations": 0},
+        )
+
+        too_large = client.get(
+            "/people/@I3@/sosa",
+            params={"generations": 11},
+        )
+
+    assert too_small.status_code == 422
+    assert too_large.status_code == 422

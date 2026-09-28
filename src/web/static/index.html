@@ -99,6 +99,68 @@
 
         <div id="ancestry"></div>
     </section>
+    <section>
+        <h2>4. Éventail d'ascendance</h2>
+
+        <div class="fan-controls">
+            <label for="fan-generations">
+                Générations d'ancêtres :
+            </label>
+
+            <input
+                id="fan-generations"
+                type="number"
+                min="1"
+                max="10"
+                value="4"
+            >
+
+            <label for="fan-opening">
+                Ouverture :
+            </label>
+
+            <input
+                id="fan-opening"
+                type="range"
+                min="180"
+                max="360"
+                step="10"
+                value="240"
+            >
+
+            <output id="fan-opening-value">
+                240°
+            </output>
+
+            <label>
+                <input
+                    id="fan-show-unknown"
+                    type="checkbox"
+                    checked
+                >
+                Afficher les ancêtres inconnus
+            </label>
+
+            <button
+                id="fan-render"
+                type="button"
+                disabled
+            >
+                Afficher l'éventail
+            </button>
+        </div>
+
+        <div id="fan-status"></div>
+
+        <div id="fan-container">
+            <svg
+                id="fan-chart"
+                viewBox="-520 -520 1040 560"
+                role="img"
+                aria-label="Éventail d'ascendance"
+            ></svg>
+        </div>
+    </section>
 </main>
 
 <script src="/static/app.js"></script>

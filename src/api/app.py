@@ -23,6 +23,7 @@ from src.api.schemas import (
     IgnoredTagResponse,
     ImportReportResponse,
     PersonResponse,
+    SosaOccurrenceResponse,
 )
 from src.domain.models import Genealogy, ImportReport, Person
 from src.gedcom.importer import import_gedcom
@@ -32,6 +33,8 @@ from src.services.search import (
     get_birth_year,
     search_people,
 )
+
+from src.services.sosa import build_sosa_ancestry
 
 
 def create_app(genealogy: Genealogy | None = None) -> FastAPI:
@@ -204,6 +207,56 @@ def create_app(genealogy: Genealogy | None = None) -> FastAPI:
                 generations=generations,
             )
         ]
+
+    @app.get(
+        "/people/{person_id}/sosa",
+        response_model=list[SosaOccurrenceResponse],
+    )
+    def sosa_ancestry(
+        person_id: str,
+        request: Request,
+        generations: int = Query(
+            default=5,
+            ge=1,
+            le=10,
+        ),
+    ) -> list[SosaOccurrenceResponse]:
+        current = _genealogy(request)
+
+        if person_id not in current.persons:
+            raise HTTPException(
+                status_code=404,
+                detail="Person not found",
+            )
+
+        occurrences = build_sosa_ancestry(
+            current,
+            person_id,
+            generations=generations,
+        )
+
+        result: list[SosaOccurrenceResponse] = []
+
+        for occurrence in occurrences:
+            person = (
+                current.persons.get(occurrence.person_id)
+                if occurrence.person_id is not None
+                else None
+            )
+
+            result.append(
+                SosaOccurrenceResponse(
+                    sosa=occurrence.sosa,
+                    generation=occurrence.generation,
+                    person=(
+                        _person_response(person)
+                        if person is not None
+                        else None
+                    ),
+                )
+            )
+
+        return result
 
     return app
 
