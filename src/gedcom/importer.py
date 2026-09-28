@@ -22,6 +22,7 @@ def import_gedcom(path: str | Path) -> tuple[Genealogy, ImportReport]:
 
     genealogy = Genealogy()
     ignored_tags: list[IgnoredTag] = []
+    warnings: list[str] = []
 
     with GedcomReader(str(path)) as parser:
         for record in parser.records0():
@@ -29,8 +30,34 @@ def import_gedcom(path: str | Path) -> tuple[Genealogy, ImportReport]:
                 person = _import_person(record)
                 genealogy.persons[person.id] = person
 
+                sex_record = record.sub_tag("SEX")
+
+                if (
+                    sex_record is not None
+                    and sex_record.value is not None
+                    and str(sex_record.value) not in ("M", "F")
+                ):
+                    warnings.append(
+                        f"{record.xref_id}: valeur SEX non reconnue : "
+                        f"{sex_record.value}"
+                    )
+
+                supported_tags = {
+                    "NAME",
+                    "SEX",
+                    "FAMS",
+                    "FAMC",
+                    "BIRT",
+                    "BAPM",
+                    "NATU",
+                    "DEAT",
+                    "BURI",
+                    "CREM",
+                    "OCCU",
+                }
+
                 for sub_record in record.sub_records:
-                    if sub_record.tag.startswith("_"):
+                    if sub_record.tag not in supported_tags:
                         ignored_tags.append(
                             IgnoredTag(
                                 tag=sub_record.tag,
@@ -64,6 +91,7 @@ def import_gedcom(path: str | Path) -> tuple[Genealogy, ImportReport]:
         families_count=len(genealogy.families),
         events_count=len(genealogy.events),
         places_count=len(genealogy.places),
+        warnings=warnings,
         ignored_tags=ignored_tags,
     )
 
@@ -121,11 +149,18 @@ def _import_event(record, event_type: str) -> Event:
     place_value = _value(record, "PLAC")
     detail = _value(record, "TYPE")
 
+    sources = [
+        str(source.value)
+        for source in record.sub_tags("SOUR")
+        if source.value is not None
+    ]
+
     return Event(
         type=event_type,
         detail=detail,
         date=EventDate(value=date_value) if date_value else None,
         place=Place(original_name=place_value) if place_value else None,
+        sources=sources,
     )
 
 def _value(record, tag: str) -> str | None:

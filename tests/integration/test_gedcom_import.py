@@ -11,7 +11,7 @@ def test_import_edge_cases():
     genealogy, report = import_gedcom(FIXTURE)
 
     # Global structure
-    assert len(genealogy.persons) == 3
+    assert len(genealogy.persons) == 4
     assert len(genealogy.families) == 1
 
     # Unicode and approximate date
@@ -51,6 +51,15 @@ def test_import_edge_cases():
     assert naturalization.date is not None
     assert naturalization.date.value == "17 JUL 1946"
 
+    jean_birth = next(
+        event for event in jean.events
+        if event.type == "BIRT"
+    )
+
+    assert jean_birth.sources == [
+        "https://example.org/archive/birth-1900"
+    ]
+
     # FROM ... TO ...
     marie = genealogy.persons["@I3@"]
     birth = next(event for event in marie.events if event.type == "BIRT")
@@ -82,7 +91,7 @@ def test_import_edge_cases():
     assert unmarried.detail == "unmarried"
 
     # Import report
-    assert report.persons_count == 3
+    assert report.persons_count == 4
     assert report.families_count == 1
 
     assert report.events_count == 11
@@ -93,7 +102,17 @@ def test_import_edge_cases():
         "Écully, France",
     }
 
-    assert report.warnings == []
+    assert report.warnings == [
+        "@I4@: valeur SEX non reconnue : X"
+    ]
+
     assert report.ignored_tags == [
-        IgnoredTag(tag="_CUSTOM", record_id="@I1@")
+        IgnoredTag(
+            tag="_CUSTOM",
+            record_id="@I1@",
+        ),
+        IgnoredTag(
+            tag="UNKNOWN",
+            record_id="@I4@",
+        ),
     ]

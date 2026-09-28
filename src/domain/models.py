@@ -28,7 +28,7 @@ class Event:
     detail: str | None = None
     date: EventDate | None = None
     place: Place | None = None
-
+    sources: list[str] = field(default_factory=list)
 
 @dataclass
 class Person:

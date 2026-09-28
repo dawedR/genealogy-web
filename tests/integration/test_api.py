@@ -178,16 +178,22 @@ def test_upload_gedcom_replaces_active_genealogy():
         report = response.json()
 
         assert report["filename"] == "edge-cases.ged"
-        assert report["persons_count"] == 3
+        assert report["persons_count"] == 4
         assert report["families_count"] == 1
         assert report["events_count"] == 11
         assert report["places_count"] == 2
-        assert report["warnings"] == []
+        assert report["warnings"] == [
+            "@I4@: valeur SEX non reconnue : X"
+        ]
         assert report["ignored_tags"] == [
             {
                 "tag": "_CUSTOM",
                 "record_id": "@I1@",
-            }
+            },
+            {
+                "tag": "UNKNOWN",
+                "record_id": "@I4@",
+            },
         ]
 
         person = client.get("/people/@I2@")
