@@ -260,6 +260,8 @@ def test_index_page():
     assert "Genealogy Web" in response.text
     assert 'id="import-form"' in response.text
     assert 'id="search-form"' in response.text
+    assert 'id="warnings-section"' in response.text
+    assert 'id="ignored-tags-section"' in response.text
 
 
 def test_static_javascript():
@@ -268,6 +270,7 @@ def test_static_javascript():
 
     assert response.status_code == 200
     assert "loadAncestry" in response.text
+    assert "renderImportDetails" in response.text
 
 def test_search_uploaded_people_by_birth_year():
     with make_client() as client:

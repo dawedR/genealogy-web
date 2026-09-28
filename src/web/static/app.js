@@ -11,6 +11,21 @@ const generationsInput = document.querySelector("#generations");
 const selectedPerson = document.querySelector("#selected-person");
 const ancestryContainer = document.querySelector("#ancestry");
 
+const importDetails =
+    document.querySelector("#import-details");
+
+const warningsSection =
+    document.querySelector("#warnings-section");
+
+const warningsList =
+    document.querySelector("#warnings-list");
+
+const ignoredTagsSection =
+    document.querySelector("#ignored-tags-section");
+
+const ignoredTagsList =
+    document.querySelector("#ignored-tags-list");
+
 let selectedPersonId = null;
 
 
@@ -25,6 +40,11 @@ importForm.addEventListener("submit", async (event) => {
 
     importStatus.textContent = "Import en cours…";
     importReport.hidden = true;
+    importDetails.hidden = true;
+    warningsSection.hidden = true;
+    ignoredTagsSection.hidden = true;
+    warningsList.innerHTML = "";
+    ignoredTagsList.innerHTML = "";
 
     const formData = new FormData();
     formData.append("file", file);
@@ -58,6 +78,8 @@ importForm.addEventListener("submit", async (event) => {
         importReport.hidden = false;
         importStatus.textContent =
             `Import réussi : ${data.filename}`;
+        
+        renderImportDetails(data);
 
         selectedPersonId = null;
         selectedPerson.textContent =
@@ -213,4 +235,40 @@ function renderAncestry(ancestors) {
     }
 
     ancestryContainer.appendChild(list);
+}
+
+function renderImportDetails(report) {
+    warningsList.innerHTML = "";
+    ignoredTagsList.innerHTML = "";
+
+    warningsSection.hidden = true;
+    ignoredTagsSection.hidden = true;
+
+    if (report.warnings.length > 0) {
+        for (const warning of report.warnings) {
+            const item = document.createElement("li");
+            item.textContent = warning;
+            warningsList.appendChild(item);
+        }
+
+        warningsSection.hidden = false;
+    }
+
+    if (report.ignored_tags.length > 0) {
+        for (const ignored of report.ignored_tags) {
+            const item = document.createElement("li");
+
+            item.textContent = ignored.record_id
+                ? `${ignored.tag} — ${ignored.record_id}`
+                : ignored.tag;
+
+            ignoredTagsList.appendChild(item);
+        }
+
+        ignoredTagsSection.hidden = false;
+    }
+
+    importDetails.hidden =
+        report.warnings.length === 0 &&
+        report.ignored_tags.length === 0;
 }
