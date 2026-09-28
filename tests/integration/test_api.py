@@ -249,3 +249,20 @@ def test_failed_import_keeps_previous_genealogy():
 
         assert person.status_code == 200
         assert person.json()["given_names"] == "Jean"
+
+def test_index_page():
+    with make_client() as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Genealogy Web" in response.text
+    assert 'id="import-form"' in response.text
+    assert 'id="search-form"' in response.text
+
+
+def test_static_javascript():
+    with make_client() as client:
+        response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "loadAncestry" in response.text

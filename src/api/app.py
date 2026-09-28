@@ -5,6 +5,8 @@ import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from fastapi import (
     FastAPI,
@@ -41,6 +43,26 @@ def create_app(genealogy: Genealogy | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    
+    web_root = (
+        Path(__file__).resolve().parent.parent
+        / "web"
+        / "static"
+    )
+
+    app.mount(
+        "/static",
+        StaticFiles(directory=web_root),
+        name="static",
+    )
+
+    @app.get(
+        "/",
+        include_in_schema=False,
+    )
+    
+    def index() -> FileResponse:
+        return FileResponse(web_root / "index.html")
 
     @app.get(
         "/health",

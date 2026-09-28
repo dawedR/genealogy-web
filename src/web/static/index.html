@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Genealogy Web</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+<main>
+    <header>
+        <h1>Genealogy Web</h1>
+        <p>Exploration d'une généalogie à partir d'un fichier GEDCOM.</p>
+    </header>
+
+    <section>
+        <h2>1. Importer un GEDCOM</h2>
+
+        <form id="import-form">
+            <input
+                id="gedcom-file"
+                name="file"
+                type="file"
+                accept=".ged,.gedcom"
+                required
+            >
+            <button type="submit">Importer</button>
+        </form>
+
+        <p id="import-status" class="status"></p>
+
+        <dl id="import-report" class="report" hidden>
+            <div>
+                <dt>Personnes</dt>
+                <dd id="persons-count">0</dd>
+            </div>
+            <div>
+                <dt>Familles</dt>
+                <dd id="families-count">0</dd>
+            </div>
+            <div>
+                <dt>Événements</dt>
+                <dd id="events-count">0</dd>
+            </div>
+            <div>
+                <dt>Lieux</dt>
+                <dd id="places-count">0</dd>
+            </div>
+        </dl>
+    </section>
+
+    <section>
+        <h2>2. Choisir la personne souche</h2>
+
+        <form id="search-form">
+            <input
+                id="search-query"
+                type="search"
+                placeholder="Nom ou prénom"
+                autocomplete="off"
+                required
+            >
+            <button type="submit">Rechercher</button>
+        </form>
+
+        <div id="search-results"></div>
+    </section>
+
+    <section>
+        <h2>3. Ascendance</h2>
+
+        <label for="generations">
+            Générations :
+        </label>
+
+        <input
+            id="generations"
+            type="number"
+            min="0"
+            max="20"
+            value="3"
+        >
+
+        <p id="selected-person">
+            Aucune personne sélectionnée.
+        </p>
+
+        <div id="ancestry"></div>
+    </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
