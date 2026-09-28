@@ -191,6 +191,10 @@ button {
     fill: #202124;
 }
 
+.fan-sosa {
+    font-weight: 600;
+}
+
 .fan-name {
     font-weight: 400;
 }
@@ -199,10 +203,20 @@ button {
     font-weight: 600;
 }
 
-.fan-sosa {
+.fan-label-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+    margin: 1rem 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid #ddd;
+}
+
+.fan-label-options legend {
+    padding: 0 0.4rem;
     font-weight: 600;
 }
 
-.fan-name {
-    font-weight: 400;
+.fan-label-options label {
+    white-space: nowrap;
 }

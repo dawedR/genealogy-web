@@ -47,6 +47,41 @@ const fanStatus =
 const fanChart =
     document.querySelector("#fan-chart");
 
+const fanLabelSosa =
+    document.querySelector("#fan-label-sosa");
+
+const fanLabelName =
+    document.querySelector("#fan-label-name");
+
+const fanLabelBirth =
+    document.querySelector("#fan-label-birth");
+
+const fanLabelBirthPlace =
+    document.querySelector("#fan-label-birth-place");
+
+const fanLabelDeath =
+    document.querySelector("#fan-label-death");
+
+const fanLabelDeathPlace =
+    document.querySelector("#fan-label-death-place");
+
+const fanLabelControls = [
+    fanLabelSosa,
+    fanLabelName,
+    fanLabelBirth,
+    fanLabelBirthPlace,
+    fanLabelDeath,
+    fanLabelDeathPlace,
+];
+
+for (const control of fanLabelControls) {
+    control.addEventListener("change", () => {
+        if (selectedPersonId !== null) {
+            loadFanChart(selectedPersonId);
+        }
+    });
+}
+
 let selectedPersonId = null;
 
 
@@ -150,6 +185,32 @@ generationsInput.addEventListener("change", () => {
     }
 });
 
+fanRenderButton.addEventListener("click", () => {
+    if (selectedPersonId !== null) {
+        loadFanChart(selectedPersonId);
+    }
+});
+
+fanGenerations.addEventListener("change", () => {
+    if (selectedPersonId !== null) {
+        loadFanChart(selectedPersonId);
+    }
+});
+
+fanShowUnknown.addEventListener("change", () => {
+    if (selectedPersonId !== null) {
+        loadFanChart(selectedPersonId);
+    }
+});
+
+fanOpening.addEventListener("input", () => {
+    fanOpeningValue.textContent =
+        `${fanOpening.value}°`;
+
+    if (selectedPersonId !== null) {
+        loadFanChart(selectedPersonId);
+    }
+});
 
 function renderSearchResults(people) {
     searchResults.innerHTML = "";
@@ -180,33 +241,6 @@ function renderSearchResults(people) {
             fanRenderButton.disabled = false;
             fanChart.innerHTML = "";
             fanStatus.textContent = "";
-
-            fanRenderButton.addEventListener("click", () => {
-                if (selectedPersonId !== null) {
-                    loadFanChart(selectedPersonId);
-                }
-            });
-
-            fanGenerations.addEventListener("change", () => {
-                if (selectedPersonId !== null) {
-                    loadFanChart(selectedPersonId);
-                }
-            });
-
-            fanShowUnknown.addEventListener("change", () => {
-                if (selectedPersonId !== null) {
-                    loadFanChart(selectedPersonId);
-                }
-            });
-
-            fanOpening.addEventListener("input", () => {
-                fanOpeningValue.textContent =
-                    `${fanOpening.value}°`;
-
-                if (selectedPersonId !== null) {
-                    loadFanChart(selectedPersonId);
-                }
-            });
 
             const birth = person.birth_date
                 ? ` — naissance : ${person.birth_date}`
@@ -373,6 +407,9 @@ function renderFanChart(
         openingAngle,
     );
 
+    const labelConfig =
+        getFanLabelConfig();
+
     setFanViewBox(geometry);
 
     for (const occurrence of occurrences) {
@@ -398,6 +435,7 @@ function renderFanChart(
                 occurrence,
                 sector,
                 geometry,
+                labelConfig,
             );
         }
     }
@@ -667,6 +705,7 @@ function addFanLabel(
     occurrence,
     sector,
     geometry,
+    labelConfig,
 ) {
     const svgNS =
         "http://www.w3.org/2000/svg";
@@ -727,7 +766,12 @@ function addFanLabel(
         buildPersonLabelLines(
             occurrence,
             generation,
+            labelConfig,
         );
+
+    if (lines.length === 0) {
+        return;
+    }
 
     const text =
         document.createElementNS(
@@ -792,62 +836,74 @@ function labelTransform(
 function buildPersonLabelLines(
     occurrence,
     generation,
+    config,
 ) {
     const person = occurrence.person;
 
-    const name =
-        `${person.given_names} ${person.surname}`
-            .trim();
+    const primary = [];
+    const secondary = [];
 
-    const life =
-        formatLifeYears(person);
-
-    if (generation <= 2) {
-        const lines = [
-            `S${occurrence.sosa}`,
-            name,
-        ];
-
-        if (life) {
-            lines.push(life);
-        }
-
-        return lines;
+    if (config.showSosa) {
+        primary.push(`S${occurrence.sosa}`);
     }
 
-    if (generation <= 5) {
-        return [
-            `S${occurrence.sosa}`,
-            name,
-            ...(life ? [life] : []),
-        ];
+    if (config.showName) {
+        const name =
+            `${person.given_names} ${person.surname}`
+                .trim();
+
+        if (name) {
+            primary.push(name);
+        }
+    }
+
+    if (config.showBirth) {
+        const birth =
+            formatEventLabel(
+                "°",
+                person.birth_date,
+            );
+
+        if (birth) {
+            secondary.push(birth);
+        }
+    }
+
+    if (config.showBirthPlace && person.birth_place) {
+        secondary.push(person.birth_place);
+    }
+
+    if (config.showDeath) {
+        const death =
+            formatEventLabel(
+                "†",
+                person.death_date,
+            );
+
+        if (death) {
+            secondary.push(death);
+        }
+    }
+
+    if (config.showDeathPlace && person.death_place) {
+        secondary.push(person.death_place);
     }
 
     /*
-     * Outer generations deliberately start compact.
-     * More detailed configurable labels will come later.
+     * Outer generations need a compact first choice.
+     * fitFanLabel() can still remove secondary lines later.
      */
-    return [
-        `S${occurrence.sosa} ${name}`,
-    ];
-}
-
-
-function formatLifeYears(person) {
-    const birth =
-        person.birth_year || "?";
-
-    const death =
-        person.death_year || "?";
-
-    if (
-        birth === "?" &&
-        death === "?"
-    ) {
-        return "";
+    if (generation >= 6) {
+        return [
+            primary.join(" "),
+            ...secondary,
+        ].filter(Boolean);
     }
 
-    return `${birth}–${death}`;
+    return [
+        ...primary,
+        ...secondary,
+    ];
 }
 
 
@@ -956,14 +1012,10 @@ function fitFanLabel(
         fontSize -= 0.5;
     }
 
-    /*
-     * If the full content still does not fit,
-     * progressively remove secondary information.
-     */
     if (lines.length > 2) {
         fitFanLabel(
             text,
-            lines.slice(0, 2),
+            lines.slice(0, -1),
             maxWidth,
             maxHeight,
             generation,
@@ -1172,4 +1224,26 @@ function setFanViewBox(geometry) {
             maxY - minY,
         ].join(" "),
     );
+}
+
+function getFanLabelConfig() {
+    return {
+        showSosa: fanLabelSosa.checked,
+        showName: fanLabelName.checked,
+        showBirth: fanLabelBirth.checked,
+        showBirthPlace: fanLabelBirthPlace.checked,
+        showDeath: fanLabelDeath.checked,
+        showDeathPlace: fanLabelDeathPlace.checked,
+    };
+}
+
+function formatEventLabel(
+    symbol,
+    value,
+) {
+    if (!value) {
+        return "";
+    }
+
+    return `${symbol} ${value}`;
 }

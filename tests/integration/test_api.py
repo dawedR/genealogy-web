@@ -275,6 +275,10 @@ def test_index_page():
     assert 'id="ignored-tags-section"' in response.text
     assert 'id="fan-opening"' in response.text
     assert 'id="fan-chart"' in response.text
+    assert 'id="fan-label-sosa"' in response.text
+    assert 'id="fan-label-name"' in response.text
+    assert 'id="fan-label-birth"' in response.text
+    assert 'id="fan-label-death"' in response.text
 
 
 def test_static_javascript():
@@ -287,6 +291,9 @@ def test_static_javascript():
     assert "createFanGeometry" in response.text
     assert "setFanViewBox" in response.text
     assert "labelTransform" in response.text
+    assert "getFanLabelConfig" in response.text
+    assert "buildPersonLabelLines" in response.text
+    assert "formatEventLabel" in response.text
 
 def test_search_uploaded_people_by_birth_year():
     with make_client() as client:
