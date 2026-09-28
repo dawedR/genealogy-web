@@ -960,6 +960,16 @@ Contenu :
 Aucune visualisation complexe n'est nécessaire pour valider V0.
 
 ---
+### État d'implémentation
+
+Le pipeline fonctionnel V0 est implémenté et validé.
+
+Les écarts et limitations connus sont documentés dans
+`docs/ARCHITECTURE.md`, section **État d'implémentation V0**.
+
+Les exigences de ce document restent le référentiel fonctionnel ; une
+limitation documentée de l'implémentation ne modifie pas l'exigence
+d'origine.
 
 ## V1 — Éventail
 

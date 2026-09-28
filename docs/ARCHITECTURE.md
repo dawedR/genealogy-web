@@ -1013,3 +1013,205 @@ GeneWeb doit pouvoir disparaître sans rendre Genealogy Web inutilisable.
 
 Cette indépendance constitue le principal critère de qualité de
 l'architecture.
+
+---
+
+# 44. État d'implémentation V0
+
+État au 28 septembre 2026.
+
+Le pipeline architectural défini pour V0 au chapitre 41 est désormais
+implémenté et testé de bout en bout :
+
+```text
+GEDCOM
+   │
+   ▼
+upload HTTP / interface Web
+   │
+   ▼
+ged4py
+   │
+   ▼
+modèle métier
+Person / Family / Event / Place
+   │
+   ▼
+rapport d'import
+   │
+   ▼
+recherche d'une personne
+   │
+   ▼
+choix de la souche
+   │
+   ▼
+calcul et affichage textuel de l'ascendance
+```
+
+---
+
+## 44.1 Import GEDCOM
+
+Le parser retenu pour V0 est ged4py.
+
+Il est isolé dans la couche src/gedcom/. Le modèle métier et les services
+applicatifs ne dépendent pas directement de ged4py.
+
+L'import actuellement implémenté reconnaît notamment :
+
+individus ;
+familles ;
+relations parents/enfants ;
+naissance ;
+baptême ;
+décès ;
+inhumation ;
+crémation ;
+naturalisation ;
+mariage ;
+divorce ;
+événements familiaux génériques ;
+professions ;
+lieux ;
+sources textuelles associées aux événements.
+
+Les dates interprétées par ged4py sont conservées sans ajout artificiel
+de précision.
+
+Les lieux sont recensés avec leur libellé d'origine et dédupliqués pour le
+rapport d'import.
+
+## 44.2 Diagnostics d'import
+
+ged4py ne fournit pas, dans les essais réalisés pour V0, une collection
+publique de warnings de parsing directement exploitable.
+
+Le rapport d'import distingue donc :
+
+les erreurs fatales, qui font échouer l'import ;
+les avertissements détectés par l'adaptateur Genealogy Web ;
+les tags présents dans le GEDCOM mais non exploités par la V0.
+
+Une valeur SEX non reconnue produit par exemple un avertissement sans
+empêcher l'import.
+
+Les tags non pris en charge sont explicitement recensés dans
+ignored_tags.
+
+Une date GEDCOM interprétée par ged4py comme une expression textuelle
+(DateValuePhrase) n'est pas considérée automatiquement comme une erreur.
+
+## 44.3 Recherche et souche
+
+La recherche d'individus prend en charge :
+
+prénom ;
+nom ;
+recherche insensible à la casse ;
+recherche sans distinction d'accents ;
+année de naissance lorsqu'elle est connue.
+
+La date de naissance est présentée dans les résultats afin de permettre
+la distinction des homonymes.
+
+La personne souche peut être changée sans réimporter le GEDCOM.
+
+## 44.4 Ascendance
+
+L'ascendance est calculée à partir des relations Family.
+
+Le service d'ascendance :
+
+accepte une profondeur de générations configurable ;
+tolère les parents inconnus ;
+évite les boucles infinies sur des données cycliques ou incohérentes ;
+produit une représentation textuelle structurée par génération.
+
+Cette représentation constitue le résultat attendu pour V0 et servira
+d'entrée au moteur graphique de V1.
+
+## 44.5 API et interface
+
+La V0 expose notamment :
+
+GET  /health
+POST /imports
+GET  /people?q=...
+GET  /people/{id}
+GET  /people/{id}/ancestors
+
+Une interface HTML/CSS/JavaScript légère permet :
+
+de sélectionner un fichier GEDCOM ;
+de lancer l'import ;
+de consulter le rapport d'import ;
+de consulter les diagnostics ;
+de rechercher une personne ;
+de choisir la souche ;
+de choisir le nombre de générations ;
+d'afficher l'ascendance textuelle.
+
+Le frontend reste volontairement indépendant du parser GEDCOM.
+
+## 44.6 Validation sur données réelles
+
+La V0 a été validée avec un export GeneWeb réel.
+
+Le jeu testé produit actuellement :
+
+Personnes       121
+Familles         49
+Événements      224
+Lieux distincts  80
+Sources           54
+
+La recherche d'une personne puis le calcul de son ascendance sur plusieurs
+générations ont été validés via l'API et via l'interface Web.
+
+Les données GEDCOM réelles utilisées pour ces essais ne sont pas versionnées
+dans Git.
+
+## 44.7 Tests
+
+La suite automatisée contient actuellement 35 tests couvrant notamment :
+
+modèle métier ;
+import GEDCOM ;
+cas limites GEDCOM synthétiques ;
+Unicode ;
+dates partielles ;
+relations familiales ;
+sources ;
+diagnostics ;
+recherche ;
+année de naissance ;
+ascendance ;
+protection contre les cycles ;
+API HTTP ;
+upload GEDCOM ;
+conservation de l'ancienne généalogie en cas d'échec d'import ;
+exposition de l'interface Web.
+
+## 44.8 Limitations connues de la V0
+
+Les limitations suivantes sont connues et explicites :
+
+les NOTE ne sont pas encore intégrées au modèle métier ;
+les médias et portraits ne sont pas importés ;
+les sources sont conservées sous forme textuelle, sans modèle
+bibliographique structuré ;
+les diagnostics sont produits par l'adaptateur Genealogy Web lorsque
+cela est possible et ne constituent pas une reproduction d'un système
+de warnings interne à ged4py ;
+le modèle d'événement ne représente pas encore explicitement toutes les
+personnes concernées par un événement ;
+la persistance durable de la généalogie importée n'est pas encore mise
+en œuvre ;
+la stratégie de réimport décrite dans IDENTITY_AND_REIMPORT.md
+(SHA-256, SourceId, comparaison et rapport) reste à implémenter ;
+aucune visualisation graphique complexe n'appartient à cette V0.
+
+Ces limitations ne remettent pas en cause la validation du pipeline
+architectural défini au chapitre 41. Elles doivent rester explicites lors
+des évolutions suivantes.
