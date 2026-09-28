@@ -127,9 +127,11 @@ def _import_family(record) -> Family:
     wife = record.sub_tag("WIFE")
 
     if husband is not None:
+        family.father_id = husband.xref_id
         family.partners.append(husband.xref_id)
 
     if wife is not None:
+        family.mother_id = wife.xref_id
         family.partners.append(wife.xref_id)
 
     for child in record.sub_tags("CHIL"):

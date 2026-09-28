@@ -76,6 +76,8 @@ def test_import_edge_cases():
     family = genealogy.families["@F1@"]
     assert family.partners == ["@I2@", "@I1@"]
     assert family.children == ["@I3@"]
+    assert family.father_id == "@I2@"
+    assert family.mother_id == "@I1@"
 
     marriage = next(event for event in family.events if event.type == "MARR")
     assert marriage.date is not None

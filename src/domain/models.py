@@ -45,7 +45,8 @@ class Family:
     partners: list[str] = field(default_factory=list)
     children: list[str] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
-
+    father_id: str | None = None
+    mother_id: str | None = None
 
 @dataclass
 class Genealogy:
