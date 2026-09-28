@@ -32,6 +32,10 @@ from src.services.search import (
     get_birth_date,
     get_birth_year,
     search_people,
+    get_birth_place,
+    get_death_date,
+    get_death_year,
+    get_death_place,
 )
 
 from src.services.sosa import build_sosa_ancestry
@@ -272,8 +276,14 @@ def _person_response(person: Person) -> PersonResponse:
         surname=person.surname,
         sex=person.sex.value,
         occupations=person.occupations,
+
         birth_date=get_birth_date(person),
         birth_year=get_birth_year(person),
+        birth_place=get_birth_place(person),
+
+        death_date=get_death_date(person),
+        death_year=get_death_year(person),
+        death_place=get_death_place(person),
     )
 
 def _import_report_response(

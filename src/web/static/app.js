@@ -712,73 +712,44 @@ function addFanLabel(
     );
 
     const availableWidth =
-        estimateLabelWidth(
+        getLabelAvailableWidth(
             sector,
             generation,
         );
 
-    const fontSize =
-        getFanFontSize(
+    const availableHeight =
+        getLabelAvailableHeight(
+            sector,
             generation,
-            availableWidth,
         );
 
-    const sosa =
+    const lines =
+        buildPersonLabelLines(
+            occurrence,
+            generation,
+        );
+
+    const text =
         document.createElementNS(
             svgNS,
             "text",
         );
 
-    sosa.setAttribute(
-        "class",
-        "fan-sosa",
-    );
-
-    sosa.setAttribute(
-        "font-size",
-        Math.max(7, fontSize - 1),
-    );
-
-    sosa.setAttribute(
-        "y",
-        -fontSize * 0.65,
-    );
-
-    sosa.textContent =
-        `S${occurrence.sosa}`;
-
-    const name =
-        document.createElementNS(
-            svgNS,
-            "text",
-        );
-
-    name.setAttribute(
+    text.setAttribute(
         "class",
         "fan-name",
     );
 
-    name.setAttribute(
-        "font-size",
-        fontSize,
-    );
-
-    name.setAttribute(
-        "y",
-        fontSize * 0.55,
-    );
-
-    name.textContent =
-        compactPersonName(
-            occurrence.person,
-            availableWidth,
-            fontSize,
-        );
-
-    group.appendChild(sosa);
-    group.appendChild(name);
-
+    group.appendChild(text);
     fanChart.appendChild(group);
+
+    fitFanLabel(
+        text,
+        lines,
+        availableWidth,
+        availableHeight,
+        generation,
+    );
 }
 
 
@@ -818,8 +789,69 @@ function labelTransform(
     );
 }
 
+function buildPersonLabelLines(
+    occurrence,
+    generation,
+) {
+    const person = occurrence.person;
 
-function estimateLabelWidth(
+    const name =
+        `${person.given_names} ${person.surname}`
+            .trim();
+
+    const life =
+        formatLifeYears(person);
+
+    if (generation <= 2) {
+        const lines = [
+            `S${occurrence.sosa}`,
+            name,
+        ];
+
+        if (life) {
+            lines.push(life);
+        }
+
+        return lines;
+    }
+
+    if (generation <= 5) {
+        return [
+            `S${occurrence.sosa}`,
+            name,
+            ...(life ? [life] : []),
+        ];
+    }
+
+    /*
+     * Outer generations deliberately start compact.
+     * More detailed configurable labels will come later.
+     */
+    return [
+        `S${occurrence.sosa} ${name}`,
+    ];
+}
+
+
+function formatLifeYears(person) {
+    const birth =
+        person.birth_year || "?";
+
+    const death =
+        person.death_year || "?";
+
+    if (
+        birth === "?" &&
+        death === "?"
+    ) {
+        return "";
+    }
+
+    return `${birth}–${death}`;
+}
+
+
+function getLabelAvailableWidth(
     sector,
     generation,
 ) {
@@ -835,97 +867,251 @@ function estimateLabelWidth(
             sector.outerRadius
         ) / 2;
 
-    const arcWidth =
+    const arcLength =
         middleRadius * angleRadians;
 
-    const radialWidth =
+    const radialLength =
         sector.outerRadius -
         sector.innerRadius;
 
     if (generation <= 3) {
         return Math.max(
-            25,
-            arcWidth * 0.82,
+            20,
+            arcLength * 0.82,
         );
     }
-
-    return Math.max(
-        25,
-        radialWidth * 0.9,
-    );
-}
-
-
-function getFanFontSize(
-    generation,
-    availableWidth,
-) {
-    let preferred;
-
-    if (generation <= 1) {
-        preferred = 13;
-    } else if (generation <= 3) {
-        preferred = 11;
-    } else if (generation <= 6) {
-        preferred = 9;
-    } else {
-        preferred = 8;
-    }
-
-    if (availableWidth < 45) {
-        preferred -= 1;
-    }
-
-    return Math.max(7, preferred);
-}
-
-
-function compactPersonName(
-    person,
-    availableWidth,
-    fontSize,
-) {
-    const fullName =
-        `${person.given_names} ${person.surname}`
-            .trim();
 
     /*
-     * Rough SVG text estimate. Precise measurement can come later
-     * using getComputedTextLength().
+     * Rotated outer labels use the radial dimension.
      */
-    const approximateCharacterWidth =
-        fontSize * 0.55;
-
-    const maxCharacters =
-        Math.max(
-            5,
-            Math.floor(
-                availableWidth /
-                approximateCharacterWidth
-            ),
-        );
-
-    if (fullName.length <= maxCharacters) {
-        return fullName;
-    }
-
-    if (maxCharacters <= 6) {
-        return (
-            fullName.slice(
-                0,
-                Math.max(1, maxCharacters - 1),
-            ) + "…"
-        );
-    }
-
-    return (
-        fullName.slice(
-            0,
-            maxCharacters - 1,
-        ) + "…"
+    return Math.max(
+        20,
+        radialLength * 0.86,
     );
 }
 
+
+function getLabelAvailableHeight(
+    sector,
+    generation,
+) {
+    const radialLength =
+        sector.outerRadius -
+        sector.innerRadius;
+
+    if (generation <= 3) {
+        return radialLength * 0.78;
+    }
+
+    const angleRadians =
+        (
+            sector.endAngle -
+            sector.startAngle
+        ) * Math.PI / 180;
+
+    const middleRadius =
+        (
+            sector.innerRadius +
+            sector.outerRadius
+        ) / 2;
+
+    return Math.max(
+        18,
+        middleRadius *
+        angleRadians *
+        0.78,
+    );
+}
+
+
+function fitFanLabel(
+    text,
+    lines,
+    maxWidth,
+    maxHeight,
+    generation,
+) {
+    let fontSize =
+        initialFanFontSize(generation);
+
+    const minFontSize = 5.5;
+
+    while (fontSize >= minFontSize) {
+        populateFanText(
+            text,
+            lines,
+            fontSize,
+        );
+
+        const box =
+            text.getBBox();
+
+        if (
+            box.width <= maxWidth &&
+            box.height <= maxHeight
+        ) {
+            return;
+        }
+
+        fontSize -= 0.5;
+    }
+
+    /*
+     * If the full content still does not fit,
+     * progressively remove secondary information.
+     */
+    if (lines.length > 2) {
+        fitFanLabel(
+            text,
+            lines.slice(0, 2),
+            maxWidth,
+            maxHeight,
+            generation,
+        );
+
+        return;
+    }
+
+    if (lines.length === 2) {
+        fitFanLabel(
+            text,
+            [lines[1]],
+            maxWidth,
+            maxHeight,
+            generation,
+        );
+
+        return;
+    }
+
+    populateFanText(
+        text,
+        lines,
+        minFontSize,
+    );
+
+    truncateSvgText(
+        text,
+        maxWidth,
+    );
+}
+
+
+function initialFanFontSize(generation) {
+    if (generation === 0) {
+        return 13;
+    }
+
+    if (generation <= 2) {
+        return 12;
+    }
+
+    if (generation <= 4) {
+        return 10;
+    }
+
+    if (generation <= 6) {
+        return 8.5;
+    }
+
+    return 7.5;
+}
+
+
+function populateFanText(
+    text,
+    lines,
+    fontSize,
+) {
+    const svgNS =
+        "http://www.w3.org/2000/svg";
+
+    text.innerHTML = "";
+
+    text.setAttribute(
+        "font-size",
+        fontSize,
+    );
+
+    const lineHeight =
+        fontSize * 1.15;
+
+    const totalHeight =
+        (lines.length - 1) *
+        lineHeight;
+
+    lines.forEach(
+        (line, index) => {
+            const tspan =
+                document.createElementNS(
+                    svgNS,
+                    "tspan",
+                );
+
+            tspan.setAttribute(
+                "x",
+                "0",
+            );
+
+            if (index === 0) {
+                tspan.setAttribute(
+                    "dy",
+                    -totalHeight / 2,
+                );
+            } else {
+                tspan.setAttribute(
+                    "dy",
+                    lineHeight,
+                );
+            }
+
+            tspan.textContent = line;
+
+            text.appendChild(tspan);
+        }
+    );
+}
+
+
+function truncateSvgText(
+    text,
+    maxWidth,
+) {
+    const tspan =
+        text.querySelector("tspan");
+
+    if (!tspan) {
+        return;
+    }
+
+    const original =
+        tspan.textContent;
+
+    if (
+        tspan.getComputedTextLength()
+        <= maxWidth
+    ) {
+        return;
+    }
+
+    let value = original;
+
+    while (value.length > 1) {
+        value = value.slice(0, -1);
+
+        tspan.textContent =
+            `${value}…`;
+
+        if (
+            tspan.getComputedTextLength()
+            <= maxWidth
+        ) {
+            return;
+        }
+    }
+
+    tspan.textContent = "…";
+}
 
 function setFanViewBox(geometry) {
     const radius = geometry.outerRadius;

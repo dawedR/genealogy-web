@@ -191,6 +191,14 @@ button {
     fill: #202124;
 }
 
+.fan-name {
+    font-weight: 400;
+}
+
+.fan-name tspan:first-child {
+    font-weight: 600;
+}
+
 .fan-sosa {
     font-weight: 600;
 }

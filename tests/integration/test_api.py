@@ -103,8 +103,11 @@ def test_get_person():
         "occupations": ["Cordonnier"],
         "birth_date": None,
         "birth_year": None,
+        "birth_place": None,
+        "death_date": None,
+        "death_year": None,
+        "death_place": None,
     }
-
 
 def test_unknown_person_returns_404():
     with make_client() as client:

@@ -62,13 +62,60 @@ def search_people(
 
 
 def get_birth_date(person: Person) -> str | None:
-    """Return the normalized birth date, when known."""
+    event = get_event(person, "BIRT")
 
+    if event is None or event.date is None:
+        return None
+
+    return event.date.value
+
+def get_event(person: Person, event_type: str):
     for event in person.events:
-        if event.type == "BIRT" and event.date is not None:
-            return event.date.value
+        if event.type == event_type:
+            return event
 
     return None
+
+
+def get_birth_place(person: Person) -> str | None:
+    event = get_event(person, "BIRT")
+
+    if event is None or event.place is None:
+        return None
+
+    return event.place.original_name
+
+
+def get_death_date(person: Person) -> str | None:
+    event = get_event(person, "DEAT")
+
+    if event is None or event.date is None:
+        return None
+
+    return event.date.value
+
+
+def get_death_year(person: Person) -> str | None:
+    death_date = get_death_date(person)
+
+    if death_date is None:
+        return None
+
+    match = re.search(
+        r"\b(\d{4})\b",
+        death_date,
+    )
+
+    return match.group(1) if match else None
+
+
+def get_death_place(person: Person) -> str | None:
+    event = get_event(person, "DEAT")
+
+    if event is None or event.place is None:
+        return None
+
+    return event.place.original_name
 
 
 def get_birth_year(person: Person) -> str | None:
