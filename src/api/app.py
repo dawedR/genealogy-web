@@ -27,7 +27,11 @@ from src.api.schemas import (
 from src.domain.models import Genealogy, ImportReport, Person
 from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
-from src.services.search import search_people
+from src.services.search import (
+    get_birth_date,
+    get_birth_year,
+    search_people,
+)
 
 
 def create_app(genealogy: Genealogy | None = None) -> FastAPI:
@@ -215,8 +219,9 @@ def _person_response(person: Person) -> PersonResponse:
         surname=person.surname,
         sex=person.sex.value,
         occupations=person.occupations,
+        birth_date=get_birth_date(person),
+        birth_year=get_birth_year(person),
     )
-
 
 def _import_report_response(
     filename: str,

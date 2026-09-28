@@ -1,6 +1,14 @@
-from src.domain.models import Genealogy, Person
-from src.services.search import search_people
-
+from src.domain.models import (
+    Event,
+    EventDate,
+    Genealogy,
+    Person,
+)
+from src.services.search import (
+    get_birth_date,
+    get_birth_year,
+    search_people,
+)
 
 def make_genealogy() -> Genealogy:
     people = [
@@ -75,3 +83,123 @@ def test_search_limit():
     )
 
     assert len(results) == 3
+
+def test_birth_date_and_year():
+    person = Person(
+        id="@I10@",
+        given_names="Jean",
+        surname="Dupont",
+        events=[
+            Event(
+                type="BIRT",
+                date=EventDate(
+                    value="17 JUL 1946"
+                ),
+            )
+        ],
+    )
+
+    assert get_birth_date(person) == "17 JUL 1946"
+    assert get_birth_year(person) == "1946"
+
+
+def test_approximate_birth_year():
+    person = Person(
+        id="@I10@",
+        events=[
+            Event(
+                type="BIRT",
+                date=EventDate(
+                    value="ABOUT 1901"
+                ),
+            )
+        ],
+    )
+
+    assert get_birth_year(person) == "1901"
+
+
+def test_search_by_name_and_birth_year():
+    people = [
+        Person(
+            id="@I1@",
+            given_names="Jean",
+            surname="Dupont",
+            events=[
+                Event(
+                    type="BIRT",
+                    date=EventDate(value="1901"),
+                )
+            ],
+        ),
+        Person(
+            id="@I2@",
+            given_names="Jean",
+            surname="Dupont",
+            events=[
+                Event(
+                    type="BIRT",
+                    date=EventDate(value="1932"),
+                )
+            ],
+        ),
+    ]
+
+    genealogy = Genealogy(
+        persons={
+            person.id: person
+            for person in people
+        }
+    )
+
+    results = search_people(
+        genealogy,
+        "Jean Dupont 1932",
+    )
+
+    assert [person.id for person in results] == [
+        "@I2@"
+    ]
+
+
+def test_search_by_birth_year_only():
+    people = [
+        Person(
+            id="@I1@",
+            given_names="Jean",
+            surname="Dupont",
+            events=[
+                Event(
+                    type="BIRT",
+                    date=EventDate(value="1901"),
+                )
+            ],
+        ),
+        Person(
+            id="@I2@",
+            given_names="Marie",
+            surname="Martin",
+            events=[
+                Event(
+                    type="BIRT",
+                    date=EventDate(value="1932"),
+                )
+            ],
+        ),
+    ]
+
+    genealogy = Genealogy(
+        persons={
+            person.id: person
+            for person in people
+        }
+    )
+
+    results = search_people(
+        genealogy,
+        "1932",
+    )
+
+    assert [person.id for person in results] == [
+        "@I2@"
+    ]

@@ -99,6 +99,8 @@ def test_get_person():
         "surname": "Dupont",
         "sex": "M",
         "occupations": ["Cordonnier"],
+        "birth_date": None,
+        "birth_year": None,
     }
 
 
@@ -266,3 +268,33 @@ def test_static_javascript():
 
     assert response.status_code == 200
     assert "loadAncestry" in response.text
+
+def test_search_uploaded_people_by_birth_year():
+    with make_client() as client:
+        with GEDCOM_FIXTURE.open("rb") as gedcom_file:
+            response = client.post(
+                "/imports",
+                files={
+                    "file": (
+                        "edge-cases.ged",
+                        gedcom_file,
+                        "application/octet-stream",
+                    )
+                },
+            )
+
+        assert response.status_code == 200
+
+        response = client.get(
+            "/people",
+            params={"q": "Jean Dupont 1900"},
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert len(data) == 1
+        assert data[0]["id"] == "@I2@"
+        assert data[0]["birth_date"] == "1900"
+        assert data[0]["birth_year"] == "1900"

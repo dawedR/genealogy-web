@@ -125,14 +125,22 @@ function renderSearchResults(people) {
 
         button.type = "button";
         button.className = "person-button";
+        const birth = person.birth_date
+            ? ` — naissance : ${person.birth_date}`
+            : " — naissance inconnue";
+
         button.textContent =
-            `${person.given_names} ${person.surname}`;
+            `${person.given_names} ${person.surname}${birth}`;
 
         button.addEventListener("click", () => {
             selectedPersonId = person.id;
 
+            const birth = person.birth_date
+                ? ` — naissance : ${person.birth_date}`
+                : "";
+
             selectedPerson.textContent =
-                `Souche : ${person.given_names} ${person.surname}`;
+                `Souche : ${person.given_names} ${person.surname}${birth}`;
 
             loadAncestry(person.id);
         });

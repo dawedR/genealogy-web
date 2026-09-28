@@ -7,7 +7,8 @@ class PersonResponse(BaseModel):
     surname: str
     sex: str
     occupations: list[str]
-
+    birth_date: str | None
+    birth_year: str | None
 
 class AncestorResponse(BaseModel):
     person: PersonResponse
