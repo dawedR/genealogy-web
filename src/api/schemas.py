@@ -65,6 +65,10 @@ class PlaceEnrichmentUpdateRequest(BaseModel):
     comment: str | None = None
 
 
+class PlaceEnrichmentValidationRequest(BaseModel):
+    original_name: str
+
+
 class PlaceInventoryResponse(BaseModel):
     original_name: str
     occurrences_count: int
@@ -95,3 +99,11 @@ class GeocodingCandidateResponse(BaseModel):
 class GeocodingCandidateSelectionRequest(BaseModel):
     original_name: str
     candidate_token: str
+
+
+class AncestorPlaceOccurrenceResponse(BaseModel):
+    sosa: int
+    generation: int
+    person_id: str | None
+    birth_place_original_name: str | None
+    enrichment: PlaceEnrichmentResponse | None

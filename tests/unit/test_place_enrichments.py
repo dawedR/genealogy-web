@@ -98,3 +98,21 @@ def test_place_enrichment_accepts_coordinate_boundaries():
 
     assert enrichment.latitude == -90
     assert enrichment.longitude == 180
+
+
+def test_validated_enrichment_requires_both_coordinates():
+    with pytest.raises(ValueError, match="VALIDATED"):
+        manual_enrichment(
+            latitude=45.776,
+            longitude=None,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+
+
+def test_json_store_round_trips_validated_status(tmp_path):
+    path = tmp_path / "place_enrichments.json"
+    enrichment = manual_enrichment(status=PlaceEnrichmentStatus.VALIDATED)
+
+    JsonPlaceEnrichmentStore(path).save(enrichment)
+
+    assert JsonPlaceEnrichmentStore(path).get(enrichment.original_name) == enrichment

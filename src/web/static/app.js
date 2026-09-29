@@ -15,6 +15,9 @@ const placeEnrichmentOriginalName = document.querySelector(
 const placeEnrichmentStatus = document.querySelector(
     "#place-enrichment-status",
 );
+const placeEnrichmentValidate = document.querySelector(
+    "#place-enrichment-validate",
+);
 const placeEnrichmentNormalizedName = document.querySelector(
     "#place-enrichment-normalized-name",
 );
@@ -312,6 +315,44 @@ placeGeocodingSearch.addEventListener("click", async () => {
 });
 
 
+placeEnrichmentValidate.addEventListener("click", async () => {
+    if (selectedPlace === null) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/place-enrichments/validate", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                original_name: selectedPlace.original_name,
+            }),
+        });
+        const enrichment = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                enrichment.detail || "Impossible de valider ce lieu",
+            );
+        }
+
+        const places = await loadPlaces();
+        const updatedPlace = places.find(
+            place => place.original_name === selectedPlace.original_name,
+        );
+
+        if (updatedPlace) {
+            selectPlace(updatedPlace);
+        }
+
+        placesStatus.textContent = "Lieu validé.";
+
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
+});
+
+
 generationsInput.addEventListener("change", () => {
     if (selectedPersonId !== null) {
         loadAncestry(selectedPersonId);
@@ -433,11 +474,21 @@ async function loadPlaces() {
                 place.occurrences_count,
                 place.persons_count,
                 formatPlaceEventCounts(place.event_counts),
+                placeStatusLabel(place.enrichment),
             ];
 
-            for (const value of cells) {
+            for (const [index, value] of cells.entries()) {
                 const cell = document.createElement("td");
-                cell.textContent = value;
+
+                if (index === cells.length - 1) {
+                    const status = document.createElement("span");
+                    status.className = placeStatusClass(place.enrichment);
+                    status.textContent = value;
+                    cell.appendChild(status);
+                } else {
+                    cell.textContent = value;
+                }
+
                 row.appendChild(cell);
             }
 
@@ -463,9 +514,13 @@ function selectPlace(place) {
     const enrichment = place.enrichment;
 
     placeEnrichmentOriginalName.value = place.original_name;
-    placeEnrichmentStatus.textContent = enrichment
-        ? enrichment.status
-        : "Aucun enrichissement";
+    placeEnrichmentStatus.textContent = placeStatusLabel(enrichment);
+    placeEnrichmentStatus.className = placeStatusClass(enrichment);
+    placeEnrichmentValidate.hidden = !(
+        enrichment?.status === "MANUAL" &&
+        enrichment.latitude !== null &&
+        enrichment.longitude !== null
+    );
     placeEnrichmentNormalizedName.value =
         enrichment?.normalized_name || "";
     placeEnrichmentLatitude.value = enrichment?.latitude ?? "";
@@ -476,6 +531,24 @@ function selectPlace(place) {
     placeGeocodingResults.hidden = true;
     placeGeocodingAttribution.hidden = true;
     placeEnrichmentForm.hidden = false;
+}
+
+
+function placeStatusLabel(enrichment) {
+    return enrichment ? enrichment.status : "Aucun enrichissement";
+}
+
+
+function placeStatusClass(enrichment) {
+    if (enrichment?.status === "VALIDATED") {
+        return "place-status place-status-validated";
+    }
+
+    if (enrichment?.status === "MANUAL") {
+        return "place-status place-status-manual";
+    }
+
+    return "place-status place-status-unenriched";
 }
 
 

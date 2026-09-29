@@ -299,3 +299,26 @@ button {
     display: grid;
     gap: 0.4rem;
 }
+
+
+.place-status {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+}
+
+.place-status-unenriched {
+    color: #555;
+    background: #eeeeee;
+}
+
+.place-status-manual {
+    color: #6a4b00;
+    background: #fff2c2;
+}
+
+.place-status-validated {
+    color: #155724;
+    background: #d8f3df;
+}

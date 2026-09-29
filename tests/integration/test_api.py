@@ -3,7 +3,16 @@ from urllib import response
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
-from src.domain.models import Event, Family, Genealogy, Person, Place, Sex
+from src.domain.models import (
+    Event,
+    Family,
+    Genealogy,
+    Person,
+    Place,
+    PlaceEnrichment,
+    PlaceEnrichmentStatus,
+    Sex,
+)
 from src.services.geocoding import (
     FakeGeocoder,
     GeocodingCandidate,
@@ -557,6 +566,7 @@ def test_index_page():
         "place-enrichment-latitude",
         "place-enrichment-longitude",
         "place-enrichment-comment",
+        "place-enrichment-validate",
         "place-geocoding-query",
         "place-geocoding-search",
         "place-geocoding-results",
@@ -583,6 +593,8 @@ def test_static_javascript():
     assert "formatPlaceEventCounts" in response.text
     assert "renderGeocodingCandidates" in response.text
     assert "selectGeocodingCandidate" in response.text
+    assert "placeStatusLabel" in response.text
+    assert "place-enrichments/validate" in response.text
     assert "loadFanChart(person.id);" in response.text
     assert "renderImportDetails" in response.text
     assert "createFanGeometry" in response.text
@@ -746,3 +758,201 @@ def test_sosa_generation_limit():
 
     assert too_small.status_code == 422
     assert too_large.status_code == 422
+
+def test_validate_existing_manual_enrichment_and_reject_incomplete_coordinates():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Ecully"))
+    )
+    store = InMemoryPlaceEnrichmentStore()
+
+    with TestClient(create_app(genealogy, store)) as client:
+        created = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": "Ecully",
+                "normalized_name": "Écully",
+                "latitude": 45.776,
+                "longitude": 4.778,
+                "comment": None,
+            },
+        )
+        validated = client.post(
+            "/place-enrichments/validate",
+            json={"original_name": "Ecully"},
+        )
+
+        incomplete = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": "Ecully",
+                "normalized_name": "Écully",
+                "latitude": None,
+                "longitude": None,
+                "comment": None,
+            },
+        )
+        rejected = client.post(
+            "/place-enrichments/validate",
+            json={"original_name": "Ecully"},
+        )
+        absent = client.post(
+            "/place-enrichments/validate",
+            json={"original_name": "Lyon"},
+        )
+        store.save(
+            PlaceEnrichment(
+                original_name="Orphelin",
+                latitude=45.0,
+                longitude=4.0,
+                status=PlaceEnrichmentStatus.MANUAL,
+            )
+        )
+        orphan = client.post(
+            "/place-enrichments/validate",
+            json={"original_name": "Orphelin"},
+        )
+
+    assert created.json()["status"] == "MANUAL"
+    assert validated.json()["status"] == "VALIDATED"
+    assert incomplete.json()["status"] == "MANUAL"
+    assert rejected.status_code == 422
+    assert "VALIDATED" in rejected.json()["detail"]
+    assert absent.status_code == 404
+    assert orphan.status_code == 404
+
+
+def test_editing_validated_enrichment_applies_provenance_rules():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Ecully"))
+    )
+    store = InMemoryPlaceEnrichmentStore()
+
+    def validated_enrichment():
+        return PlaceEnrichment(
+            original_name="Ecully",
+            normalized_name="Écully",
+            latitude=45.776,
+            longitude=4.778,
+            status=PlaceEnrichmentStatus.VALIDATED,
+            source="geoapify",
+            confidence=0.9,
+            comment="Initial",
+        )
+
+    with TestClient(create_app(genealogy, store)) as client:
+        store.save(validated_enrichment())
+        comment_only = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": "Ecully",
+                "normalized_name": "Écully",
+                "latitude": 45.776,
+                "longitude": 4.778,
+                "comment": "Documenté",
+            },
+        )
+
+        store.save(validated_enrichment())
+        normalized_name = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": "Ecully",
+                "normalized_name": "Écully (Rhône)",
+                "latitude": 45.776,
+                "longitude": 4.778,
+                "comment": "Initial",
+            },
+        )
+
+        store.save(validated_enrichment())
+        coordinates = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": "Ecully",
+                "normalized_name": "Écully",
+                "latitude": 45.777,
+                "longitude": 4.778,
+                "comment": "Initial",
+            },
+        )
+
+    assert comment_only.json()["status"] == "VALIDATED"
+    assert comment_only.json()["source"] == "geoapify"
+    assert comment_only.json()["confidence"] == 0.9
+    assert normalized_name.json()["status"] == "MANUAL"
+    assert normalized_name.json()["source"] == "geoapify"
+    assert normalized_name.json()["confidence"] is None
+    assert coordinates.json()["status"] == "MANUAL"
+    assert coordinates.json()["source"] is None
+    assert coordinates.json()["confidence"] is None
+
+
+def test_sosa_places_endpoint_keeps_missing_places_and_enrichment_statuses():
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name="Manuel"))],
+            ),
+            "@I2@": Person(
+                id="@I2@",
+                events=[Event(type="BIRT", place=Place(original_name="Sans enrichissement"))],
+            ),
+            "@I3@": Person(
+                id="@I3@",
+                events=[Event(type="BIRT", place=Place(original_name="Validé"))],
+            ),
+        },
+        families={
+            "@F1@": Family(
+                id="@F1@",
+                children=["@I1@"],
+                father_id="@I2@",
+                mother_id="@I3@",
+            ),
+        },
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(
+        PlaceEnrichment(
+            original_name="Manuel",
+            latitude=45.0,
+            longitude=4.0,
+            status=PlaceEnrichmentStatus.MANUAL,
+        )
+    )
+    store.save(
+        PlaceEnrichment(
+            original_name="Validé",
+            latitude=46.0,
+            longitude=5.0,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+
+    with TestClient(create_app(genealogy, store)) as client:
+        response = client.get(
+            "/people/@I1@/sosa/places",
+            params={"generations": 2},
+        )
+
+    assert response.status_code == 200
+    assert [
+        (
+            item["sosa"],
+            item["person_id"],
+            item["birth_place_original_name"],
+            item["enrichment"]["status"] if item["enrichment"] else None,
+        )
+        for item in response.json()
+    ] == [
+        (1, "@I1@", "Manuel", "MANUAL"),
+        (2, "@I2@", "Sans enrichissement", None),
+        (3, "@I3@", "Validé", "VALIDATED"),
+        (4, None, None, None),
+        (5, None, None, None),
+        (6, None, None, None),
+        (7, None, None, None),
+    ]

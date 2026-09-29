@@ -76,6 +76,7 @@
                         <th scope="col">Occurrences</th>
                         <th scope="col">Personnes</th>
                         <th scope="col">Événements</th>
+                        <th scope="col">Statut</th>
                     </tr>
                 </thead>
                 <tbody id="places-list"></tbody>
@@ -97,6 +98,14 @@
             <p>
                 Statut : <span id="place-enrichment-status">—</span>
             </p>
+
+            <button
+                id="place-enrichment-validate"
+                type="button"
+                hidden
+            >
+                Valider ce lieu
+            </button>
 
             <label>
                 Requête Geoapify

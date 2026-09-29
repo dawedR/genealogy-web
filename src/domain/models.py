@@ -50,6 +50,13 @@ class PlaceEnrichment:
         if self.longitude is not None and not -180 <= self.longitude <= 180:
             raise ValueError("longitude must be between -180 and 180")
 
+        if self.status is PlaceEnrichmentStatus.VALIDATED and (
+            self.latitude is None or self.longitude is None
+        ):
+            raise ValueError(
+                "VALIDATED place enrichments require latitude and longitude"
+            )
+
 
 @dataclass
 class Event:

@@ -4,7 +4,7 @@ import os
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +21,7 @@ from fastapi import (
 )
 
 from src.api.schemas import (
+    AncestorPlaceOccurrenceResponse,
     AncestorResponse,
     GeocodingCandidateResponse,
     GeocodingCandidatesRequest,
@@ -30,6 +31,7 @@ from src.api.schemas import (
     ImportReportResponse,
     PersonResponse,
     PlaceEnrichmentResponse,
+    PlaceEnrichmentValidationRequest,
     PlaceEnrichmentUpdateRequest,
     PlaceInventoryResponse,
     SosaOccurrenceResponse,
@@ -43,6 +45,7 @@ from src.domain.models import (
 )
 from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
+from src.services.ancestry_geography import build_ancestry_geography
 from src.services.search import (
     get_birth_date,
     get_birth_year,
@@ -296,6 +299,31 @@ def create_app(
         _place_enrichment_store(request).save(enrichment)
         return _enrichment_response(enrichment)
 
+    @app.post(
+        "/place-enrichments/validate",
+        response_model=PlaceEnrichmentResponse,
+    )
+    def validate_place_enrichment(
+        payload: PlaceEnrichmentValidationRequest,
+        request: Request,
+    ) -> PlaceEnrichmentResponse:
+        _ensure_known_place(request, payload.original_name)
+        existing = _place_enrichment_store(request).get(payload.original_name)
+
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Place enrichment not found")
+
+        try:
+            enrichment = replace(
+                existing,
+                status=PlaceEnrichmentStatus.VALIDATED,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        _place_enrichment_store(request).save(enrichment)
+        return _enrichment_response(enrichment)
+
     @app.put(
         "/place-enrichments",
         response_model=PlaceEnrichmentResponse,
@@ -305,6 +333,33 @@ def create_app(
         request: Request,
     ) -> PlaceEnrichmentResponse:
         _ensure_known_place(request, payload.original_name)
+        existing = _place_enrichment_store(request).get(payload.original_name)
+
+        if existing is None:
+            status = PlaceEnrichmentStatus.MANUAL
+            source = None
+            confidence = None
+        else:
+            coordinates_changed = (
+                payload.latitude != existing.latitude
+                or payload.longitude != existing.longitude
+            )
+            normalized_name_changed = (
+                payload.normalized_name != existing.normalized_name
+            )
+
+            if coordinates_changed:
+                status = PlaceEnrichmentStatus.MANUAL
+                source = None
+                confidence = None
+            elif normalized_name_changed:
+                status = PlaceEnrichmentStatus.MANUAL
+                source = existing.source
+                confidence = None
+            else:
+                status = existing.status
+                source = existing.source
+                confidence = existing.confidence
 
         try:
             enrichment = PlaceEnrichment(
@@ -312,9 +367,9 @@ def create_app(
                 normalized_name=payload.normalized_name,
                 latitude=payload.latitude,
                 longitude=payload.longitude,
-                status=PlaceEnrichmentStatus.MANUAL,
-                source=None,
-                confidence=None,
+                status=status,
+                source=source,
+                confidence=confidence,
                 comment=payload.comment,
             )
         except ValueError as exc:
@@ -449,6 +504,41 @@ def create_app(
             )
 
         return result
+
+    @app.get(
+        "/people/{person_id}/sosa/places",
+        response_model=list[AncestorPlaceOccurrenceResponse],
+    )
+    def sosa_places(
+        person_id: str,
+        request: Request,
+        generations: int = Query(
+            default=5,
+            ge=0,
+            le=10,
+        ),
+    ) -> list[AncestorPlaceOccurrenceResponse]:
+        current = _genealogy(request)
+
+        if person_id not in current.persons:
+            raise HTTPException(status_code=404, detail="Person not found")
+
+        enrichments = _place_enrichment_store(request).get_all()
+        return [
+            AncestorPlaceOccurrenceResponse(
+                sosa=occurrence.sosa,
+                generation=occurrence.generation,
+                person_id=occurrence.person_id,
+                birth_place_original_name=occurrence.birth_place_original_name,
+                enrichment=_enrichment_response(occurrence.enrichment),
+            )
+            for occurrence in build_ancestry_geography(
+                current,
+                person_id,
+                generations,
+                enrichments,
+            )
+        ]
 
     return app
 
