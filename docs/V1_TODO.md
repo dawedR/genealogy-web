@@ -44,3 +44,11 @@ Implémentée initialement :
 - 10 générations ;
 - ouvertures 180°, 240°, 270°, 360° ;
 - formats d'impression futurs A4 à A0.
+
+## Coloration géographique
+
+La première palette OKLab utilisera une projection locale centrée sur une
+référence explicitement configurée. L’échelle V1 est fixée à
+`12 000 km par unité OKLab` : sur les lieux validés de Maurice, elle conserve
+une famille polonaise cohérente, distingue Łódź de Kielce/Radom et garde des
+variations locales discrètes. Elle ne dépend pas du jeu de données affiché.
