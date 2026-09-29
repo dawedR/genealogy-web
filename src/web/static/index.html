@@ -81,6 +81,60 @@
                 <tbody id="places-list"></tbody>
             </table>
         </div>
+
+        <form id="place-enrichment-form" hidden>
+            <h3>Enrichir un lieu</h3>
+
+            <label>
+                Libellé GEDCOM original
+                <input
+                    id="place-enrichment-original-name"
+                    type="text"
+                    readonly
+                >
+            </label>
+
+            <p>
+                Statut : <span id="place-enrichment-status">—</span>
+            </p>
+
+            <label>
+                Libellé normalisé
+                <input
+                    id="place-enrichment-normalized-name"
+                    type="text"
+                >
+            </label>
+
+            <label>
+                Latitude
+                <input
+                    id="place-enrichment-latitude"
+                    type="number"
+                    min="-90"
+                    max="90"
+                    step="any"
+                >
+            </label>
+
+            <label>
+                Longitude
+                <input
+                    id="place-enrichment-longitude"
+                    type="number"
+                    min="-180"
+                    max="180"
+                    step="any"
+                >
+            </label>
+
+            <label>
+                Commentaire
+                <textarea id="place-enrichment-comment"></textarea>
+            </label>
+
+            <button type="submit">Enregistrer l’enrichissement</button>
+        </form>
     </section>
 
     <section>

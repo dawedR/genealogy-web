@@ -23,10 +23,18 @@ from src.api.schemas import (
     IgnoredTagResponse,
     ImportReportResponse,
     PersonResponse,
+    PlaceEnrichmentResponse,
+    PlaceEnrichmentUpdateRequest,
     PlaceInventoryResponse,
     SosaOccurrenceResponse,
 )
-from src.domain.models import Genealogy, ImportReport, Person
+from src.domain.models import (
+    Genealogy,
+    ImportReport,
+    Person,
+    PlaceEnrichment,
+    PlaceEnrichmentStatus,
+)
 from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
 from src.services.search import (
@@ -41,14 +49,26 @@ from src.services.search import (
 
 from src.services.places import inventory_places
 from src.services.sosa import build_sosa_ancestry
+from src.storage.place_enrichments import (
+    InMemoryPlaceEnrichmentStore,
+    JsonPlaceEnrichmentStore,
+    PlaceEnrichmentStore,
+)
 
 
-def create_app(genealogy: Genealogy | None = None) -> FastAPI:
+def create_app(
+    genealogy: Genealogy | None = None,
+    place_enrichment_store: PlaceEnrichmentStore | None = None,
+) -> FastAPI:
     initial_genealogy = genealogy or Genealogy()
+    initial_place_enrichment_store = (
+        place_enrichment_store or InMemoryPlaceEnrichmentStore()
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.genealogy = initial_genealogy
+        app.state.place_enrichment_store = initial_place_enrichment_store
         yield
 
     app = FastAPI(
@@ -148,15 +168,60 @@ def create_app(genealogy: Genealogy | None = None) -> FastAPI:
     def places_inventory(
         request: Request,
     ) -> list[PlaceInventoryResponse]:
+        enrichments = _place_enrichment_store(request).get_all()
+
         return [
             PlaceInventoryResponse(
                 original_name=entry.original_name,
                 occurrences_count=entry.occurrences_count,
                 persons_count=entry.persons_count,
                 event_counts=entry.event_counts,
+                enrichment=_enrichment_response(
+                    enrichments.get(entry.original_name)
+                ),
             )
             for entry in inventory_places(_genealogy(request))
         ]
+
+    @app.put(
+        "/place-enrichments",
+        response_model=PlaceEnrichmentResponse,
+    )
+    def save_place_enrichment(
+        payload: PlaceEnrichmentUpdateRequest,
+        request: Request,
+    ) -> PlaceEnrichmentResponse:
+        known_original_names = {
+            entry.original_name
+            for entry in inventory_places(_genealogy(request))
+        }
+
+        if payload.original_name not in known_original_names:
+            raise HTTPException(
+                status_code=404,
+                detail="Place not found",
+            )
+
+        try:
+            enrichment = PlaceEnrichment(
+                original_name=payload.original_name,
+                normalized_name=payload.normalized_name,
+                latitude=payload.latitude,
+                longitude=payload.longitude,
+                status=PlaceEnrichmentStatus.MANUAL,
+                source=None,
+                confidence=None,
+                comment=payload.comment,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=str(exc),
+            ) from exc
+
+        _place_enrichment_store(request).save(enrichment)
+
+        return _enrichment_response(enrichment)
 
     @app.get(
         "/people",
@@ -288,6 +353,28 @@ def _genealogy(request: Request) -> Genealogy:
     return request.app.state.genealogy
 
 
+def _place_enrichment_store(request: Request) -> PlaceEnrichmentStore:
+    return request.app.state.place_enrichment_store
+
+
+def _enrichment_response(
+    enrichment: PlaceEnrichment | None,
+) -> PlaceEnrichmentResponse | None:
+    if enrichment is None:
+        return None
+
+    return PlaceEnrichmentResponse(
+        original_name=enrichment.original_name,
+        normalized_name=enrichment.normalized_name,
+        latitude=enrichment.latitude,
+        longitude=enrichment.longitude,
+        status=enrichment.status.value,
+        source=enrichment.source,
+        confidence=enrichment.confidence,
+        comment=enrichment.comment,
+    )
+
+
 def _person_response(person: Person) -> PersonResponse:
     return PersonResponse(
         id=person.id,
@@ -326,4 +413,8 @@ def _import_report_response(
     )
 
 
-app = create_app()
+app = create_app(
+    place_enrichment_store=JsonPlaceEnrichmentStore(
+        Path("data/place_enrichments.json")
+    )
+)

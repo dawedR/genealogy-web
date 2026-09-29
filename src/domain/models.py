@@ -22,6 +22,35 @@ class Place:
     original_name: str
 
 
+class PlaceEnrichmentStatus(str, Enum):
+    UNRESOLVED = "UNRESOLVED"
+    AUTOMATIC = "AUTOMATIC"
+    AMBIGUOUS = "AMBIGUOUS"
+    MANUAL = "MANUAL"
+    VALIDATED = "VALIDATED"
+
+
+@dataclass(frozen=True)
+class PlaceEnrichment:
+    """Local metadata associated with one exact GEDCOM place label."""
+
+    original_name: str
+    normalized_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    status: PlaceEnrichmentStatus = PlaceEnrichmentStatus.UNRESOLVED
+    source: str | None = None
+    confidence: float | None = None
+    comment: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.latitude is not None and not -90 <= self.latitude <= 90:
+            raise ValueError("latitude must be between -90 and 90")
+
+        if self.longitude is not None and not -180 <= self.longitude <= 180:
+            raise ValueError("longitude must be between -180 and 180")
+
+
 @dataclass
 class Event:
     type: str

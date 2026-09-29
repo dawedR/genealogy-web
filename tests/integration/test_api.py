@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from src.api.app import create_app
 from src.domain.models import Event, Family, Genealogy, Person, Place, Sex
+from src.storage.place_enrichments import InMemoryPlaceEnrichmentStore
 
 
 def make_genealogy() -> Genealogy:
@@ -83,15 +84,111 @@ def test_get_places_inventory():
             "occurrences_count": 2,
             "persons_count": 2,
             "event_counts": {"BIRT": 1, "MARR": 1},
+            "enrichment": None,
         },
         {
             "original_name": "Lyon, France",
             "occurrences_count": 1,
             "persons_count": 1,
             "event_counts": {"DEAT": 1},
+            "enrichment": None,
         },
     ]
 
+
+def test_upsert_place_enrichment_and_expose_it_in_inventory():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Ecully"))
+    )
+    store = InMemoryPlaceEnrichmentStore()
+
+    with TestClient(create_app(genealogy, store)) as client:
+        response = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": "Ecully",
+                "normalized_name": "Écully",
+                "latitude": 45.776,
+                "longitude": 4.778,
+                "comment": "Saisie manuelle",
+            },
+        )
+
+        places = client.get("/places")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "original_name": "Ecully",
+        "normalized_name": "Écully",
+        "latitude": 45.776,
+        "longitude": 4.778,
+        "status": "MANUAL",
+        "source": None,
+        "confidence": None,
+        "comment": "Saisie manuelle",
+    }
+    assert places.json()[0]["enrichment"] == response.json()
+
+
+def test_place_enrichment_rejects_unknown_places_and_invalid_coordinates():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Ecully"))
+    )
+
+    with TestClient(create_app(genealogy)) as client:
+        missing = client.put(
+            "/place-enrichments",
+            json={"original_name": "Écully"},
+        )
+        invalid = client.put(
+            "/place-enrichments",
+            json={"original_name": "Ecully", "latitude": 90.1},
+        )
+
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "Place not found"}
+    assert invalid.status_code == 422
+    assert "latitude" in invalid.json()["detail"]
+
+
+def test_place_enrichment_survives_rebuilt_genealogy_only_for_exact_label():
+    store = InMemoryPlaceEnrichmentStore()
+    initial = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name="Ecully"))],
+            )
+        }
+    )
+
+    with TestClient(create_app(initial, store)) as client:
+        response = client.put(
+            "/place-enrichments",
+            json={"original_name": "Ecully", "comment": "Conserver"},
+        )
+
+    rebuilt = Genealogy(
+        persons={
+            "@I2@": Person(
+                id="@I2@",
+                events=[
+                    Event(type="DEAT", place=Place(original_name="Ecully")),
+                    Event(type="BIRT", place=Place(original_name="Écully")),
+                ],
+            )
+        }
+    )
+
+    with TestClient(create_app(rebuilt, store)) as client:
+        places = client.get("/places")
+
+    assert response.status_code == 200
+    by_name = {place["original_name"]: place for place in places.json()}
+    assert by_name["Ecully"]["enrichment"]["comment"] == "Conserver"
+    assert by_name["Écully"]["enrichment"] is None
 
 def test_search_people():
     with make_client() as client:
@@ -305,8 +402,20 @@ def test_index_page():
     assert 'id="search-form"' in response.text
     assert 'id="warnings-section"' in response.text
     assert 'id="ignored-tags-section"' in response.text
-    assert 'id="places-table"' in response.text
-    assert 'id="places-list"' in response.text
+    for element_id in (
+        "places-status",
+        "places-table",
+        "places-list",
+        "place-enrichment-form",
+        "place-enrichment-original-name",
+        "place-enrichment-status",
+        "place-enrichment-normalized-name",
+        "place-enrichment-latitude",
+        "place-enrichment-longitude",
+        "place-enrichment-comment",
+    ):
+        assert f'id="{element_id}"' in response.text
+
     assert 'id="fan-opening"' in response.text
     assert 'id="fan-chart"' in response.text
     assert 'id="fan-label-sosa"' in response.text
@@ -322,7 +431,10 @@ def test_static_javascript():
     assert response.status_code == 200
     assert "loadAncestry" in response.text
     assert "loadPlaces" in response.text
+    assert "selectPlace" in response.text
+    assert "optionalCoordinate" in response.text
     assert "formatPlaceEventCounts" in response.text
+    assert "loadFanChart(person.id);" in response.text
     assert "renderImportDetails" in response.text
     assert "createFanGeometry" in response.text
     assert "setFanViewBox" in response.text
@@ -332,6 +444,26 @@ def test_static_javascript():
     assert "buildSecondaryLabelLines" in response.text
     assert "abbreviatePersonName" in response.text
     assert "formatEventLabel" in response.text
+
+
+def test_static_javascript_loads_fan_chart_when_selecting_a_person():
+    with make_client() as client:
+        response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+
+    selection_start = response.text.index(
+        'button.addEventListener("click", () => {'
+    )
+    selection_end = response.text.index(
+        "item.appendChild(button);",
+        selection_start,
+    )
+    selection_handler = response.text[selection_start:selection_end]
+
+    assert selection_handler.index("loadAncestry(person.id);") < (
+        selection_handler.index("loadFanChart(person.id);")
+    )
 
 
 def test_static_javascript_uses_ordered_label_degradation():

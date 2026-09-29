@@ -6,6 +6,27 @@ const importReport = document.querySelector("#import-report");
 const placesStatus = document.querySelector("#places-status");
 const placesTable = document.querySelector("#places-table");
 const placesList = document.querySelector("#places-list");
+const placeEnrichmentForm = document.querySelector(
+    "#place-enrichment-form",
+);
+const placeEnrichmentOriginalName = document.querySelector(
+    "#place-enrichment-original-name",
+);
+const placeEnrichmentStatus = document.querySelector(
+    "#place-enrichment-status",
+);
+const placeEnrichmentNormalizedName = document.querySelector(
+    "#place-enrichment-normalized-name",
+);
+const placeEnrichmentLatitude = document.querySelector(
+    "#place-enrichment-latitude",
+);
+const placeEnrichmentLongitude = document.querySelector(
+    "#place-enrichment-longitude",
+);
+const placeEnrichmentComment = document.querySelector(
+    "#place-enrichment-comment",
+);
 
 const searchForm = document.querySelector("#search-form");
 const searchQuery = document.querySelector("#search-query");
@@ -87,6 +108,7 @@ for (const control of fanLabelControls) {
 }
 
 let selectedPersonId = null;
+let selectedPlace = null;
 
 
 importForm.addEventListener("submit", async (event) => {
@@ -140,6 +162,8 @@ importForm.addEventListener("submit", async (event) => {
             `Import réussi : ${data.filename}`;
         
         renderImportDetails(data);
+        selectedPlace = null;
+        placeEnrichmentForm.hidden = true;
         loadPlaces();
 
         selectedPersonId = null;
@@ -180,6 +204,61 @@ searchForm.addEventListener("submit", async (event) => {
 
     } catch (error) {
         searchResults.textContent = error.message;
+    }
+});
+
+
+placeEnrichmentForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    if (selectedPlace === null) {
+        return;
+    }
+
+    const latitude = optionalCoordinate(placeEnrichmentLatitude);
+    const longitude = optionalCoordinate(placeEnrichmentLongitude);
+
+    if (latitude === undefined || longitude === undefined) {
+        placesStatus.textContent = "Coordonnée invalide.";
+        return;
+    }
+
+    try {
+        const response = await fetch("/place-enrichments", {
+            method: "PUT",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                original_name: selectedPlace.original_name,
+                normalized_name: emptyToNull(
+                    placeEnrichmentNormalizedName.value,
+                ),
+                latitude,
+                longitude,
+                comment: emptyToNull(placeEnrichmentComment.value),
+            }),
+        });
+        const enrichment = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                enrichment.detail ||
+                "Impossible d’enregistrer l’enrichissement",
+            );
+        }
+
+        const places = await loadPlaces();
+        const updatedPlace = places.find(
+            place => place.original_name === selectedPlace.original_name,
+        );
+
+        if (updatedPlace) {
+            selectPlace(updatedPlace);
+        }
+
+        placesStatus.textContent = "Enrichissement enregistré.";
+
+    } catch (error) {
+        placesStatus.textContent = error.message;
     }
 });
 
@@ -255,6 +334,7 @@ function renderSearchResults(people) {
                 `Souche : ${person.given_names} ${person.surname}${birth}`;
 
             loadAncestry(person.id);
+            loadFanChart(person.id);
         });
 
         item.appendChild(button);
@@ -284,11 +364,21 @@ async function loadPlaces() {
         if (places.length === 0) {
             placesStatus.textContent =
                 "Aucun lieu associé à un événement.";
-            return;
+            return [];
         }
 
         for (const place of places) {
             const row = document.createElement("tr");
+            row.className = "place-row";
+            row.tabIndex = 0;
+            row.addEventListener("click", () => selectPlace(place));
+            row.addEventListener("keydown", event => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    selectPlace(place);
+                }
+            });
+
             const cells = [
                 place.original_name,
                 place.occurrences_count,
@@ -309,11 +399,49 @@ async function loadPlaces() {
         placesStatus.textContent =
             `${places.length} lieux utilisés dans les événements.`;
 
+        return places;
+
     } catch (error) {
         placesStatus.textContent = error.message;
+        return [];
     }
 }
 
+
+function selectPlace(place) {
+    selectedPlace = place;
+
+    const enrichment = place.enrichment;
+
+    placeEnrichmentOriginalName.value = place.original_name;
+    placeEnrichmentStatus.textContent = enrichment
+        ? enrichment.status
+        : "Aucun enrichissement";
+    placeEnrichmentNormalizedName.value =
+        enrichment?.normalized_name || "";
+    placeEnrichmentLatitude.value = enrichment?.latitude ?? "";
+    placeEnrichmentLongitude.value = enrichment?.longitude ?? "";
+    placeEnrichmentComment.value = enrichment?.comment || "";
+    placeEnrichmentForm.hidden = false;
+}
+
+
+function optionalCoordinate(input) {
+    if (input.value.trim() === "") {
+        return null;
+    }
+
+    const value = Number(input.value);
+
+    return Number.isFinite(value) ? value : undefined;
+}
+
+
+function emptyToNull(value) {
+    const trimmed = value.trim();
+
+    return trimmed === "" ? null : trimmed;
+}
 
 function formatPlaceEventCounts(eventCounts) {
     return Object.entries(eventCounts)

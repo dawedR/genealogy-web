@@ -46,8 +46,28 @@ class SosaOccurrenceResponse(BaseModel):
     generation: int
     person: PersonResponse | None
 
+class PlaceEnrichmentResponse(BaseModel):
+    original_name: str
+    normalized_name: str | None
+    latitude: float | None
+    longitude: float | None
+    status: str
+    source: str | None
+    confidence: float | None
+    comment: str | None
+
+
+class PlaceEnrichmentUpdateRequest(BaseModel):
+    original_name: str
+    normalized_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    comment: str | None = None
+
+
 class PlaceInventoryResponse(BaseModel):
     original_name: str
     occurrences_count: int
     persons_count: int
     event_counts: dict[str, int]
+    enrichment: PlaceEnrichmentResponse | None
