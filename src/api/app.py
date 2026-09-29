@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
+import uuid
+from dataclasses import dataclass
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,6 +22,9 @@ from fastapi import (
 
 from src.api.schemas import (
     AncestorResponse,
+    GeocodingCandidateResponse,
+    GeocodingCandidatesRequest,
+    GeocodingCandidateSelectionRequest,
     HealthResponse,
     IgnoredTagResponse,
     ImportReportResponse,
@@ -47,6 +53,18 @@ from src.services.search import (
     get_death_place,
 )
 
+from src.services.geocoding import (
+    Geocoder,
+    GeocodingCandidate,
+    GeocodingNetworkError,
+    GeocodingProviderError,
+    GeocodingRequestRejectedError,
+    GeocodingResponseError,
+    GeocodingTimeoutError,
+    GeocodingUnavailableError,
+    UnavailableGeocoder,
+)
+from src.services.geoapify import GeoapifyGeocoder
 from src.services.places import inventory_places
 from src.services.sosa import build_sosa_ancestry
 from src.storage.place_enrichments import (
@@ -56,19 +74,64 @@ from src.storage.place_enrichments import (
 )
 
 
+@dataclass(frozen=True)
+class _PendingGeocodingCandidate:
+    original_name: str
+    candidate: GeocodingCandidate
+    expires_at: float
+
+
+class _PendingGeocodingCandidates:
+    """Small in-memory registry for explicit candidate selection."""
+
+    def __init__(self, ttl_seconds: float = 600) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._candidates: dict[str, _PendingGeocodingCandidate] = {}
+
+    def add(self, original_name: str, candidate: GeocodingCandidate) -> str:
+        self._discard_expired()
+        token = uuid.uuid4().hex
+        self._candidates[token] = _PendingGeocodingCandidate(
+            original_name=original_name,
+            candidate=candidate,
+            expires_at=time.monotonic() + self._ttl_seconds,
+        )
+        return token
+
+    def take(self, original_name: str, token: str) -> GeocodingCandidate | None:
+        self._discard_expired()
+        pending = self._candidates.pop(token, None)
+        if pending is None or pending.original_name != original_name:
+            return None
+        return pending.candidate
+
+    def _discard_expired(self) -> None:
+        now = time.monotonic()
+        self._candidates = {
+            token: pending
+            for token, pending in self._candidates.items()
+            if pending.expires_at > now
+        }
+
+
 def create_app(
     genealogy: Genealogy | None = None,
     place_enrichment_store: PlaceEnrichmentStore | None = None,
+    geocoder: Geocoder | None = None,
 ) -> FastAPI:
     initial_genealogy = genealogy or Genealogy()
     initial_place_enrichment_store = (
         place_enrichment_store or InMemoryPlaceEnrichmentStore()
     )
+    initial_geocoder = geocoder or UnavailableGeocoder()
+    pending_geocoding_candidates = _PendingGeocodingCandidates()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.genealogy = initial_genealogy
         app.state.place_enrichment_store = initial_place_enrichment_store
+        app.state.geocoder = initial_geocoder
+        app.state.pending_geocoding_candidates = pending_geocoding_candidates
         yield
 
     app = FastAPI(
@@ -183,6 +246,56 @@ def create_app(
             for entry in inventory_places(_genealogy(request))
         ]
 
+    @app.post(
+        "/geocoding/candidates",
+        response_model=list[GeocodingCandidateResponse],
+    )
+    def geocoding_candidates(payload: GeocodingCandidatesRequest, request: Request) -> list[GeocodingCandidateResponse]:
+        _ensure_known_place(request, payload.original_name)
+        query = payload.query.strip() if payload.query else payload.original_name
+        try:
+            candidates = _geocoder(request).search(query, limit=5)
+        except GeocodingUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except GeocodingRequestRejectedError as exc:
+            detail = f"La requête a été refusée par Geoapify (HTTP {exc.http_status})."
+            raise HTTPException(status_code=422, detail=detail) from exc
+        except GeocodingTimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except GeocodingNetworkError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except GeocodingResponseError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except GeocodingProviderError as exc:
+            raise HTTPException(status_code=502, detail="La recherche Geoapify a échoué.") from exc
+        pending = _pending_geocoding_candidates(request)
+        return [_candidate_response(candidate, pending.add(payload.original_name, candidate)) for candidate in candidates[:5]]
+
+    @app.post(
+        "/place-enrichments/geoapify-selection",
+        response_model=PlaceEnrichmentResponse,
+    )
+    def select_geoapify_candidate(payload: GeocodingCandidateSelectionRequest, request: Request) -> PlaceEnrichmentResponse:
+        _ensure_known_place(request, payload.original_name)
+        candidate = _pending_geocoding_candidates(request).take(payload.original_name, payload.candidate_token)
+        if candidate is None or candidate.provider != "geoapify":
+            raise HTTPException(status_code=404, detail="Geocoding candidate not found")
+        try:
+            enrichment = PlaceEnrichment(
+                original_name=payload.original_name,
+                normalized_name=candidate.display_name,
+                latitude=candidate.latitude,
+                longitude=candidate.longitude,
+                status=PlaceEnrichmentStatus.MANUAL,
+                source="geoapify",
+                confidence=None,
+                comment=None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _place_enrichment_store(request).save(enrichment)
+        return _enrichment_response(enrichment)
+
     @app.put(
         "/place-enrichments",
         response_model=PlaceEnrichmentResponse,
@@ -191,16 +304,7 @@ def create_app(
         payload: PlaceEnrichmentUpdateRequest,
         request: Request,
     ) -> PlaceEnrichmentResponse:
-        known_original_names = {
-            entry.original_name
-            for entry in inventory_places(_genealogy(request))
-        }
-
-        if payload.original_name not in known_original_names:
-            raise HTTPException(
-                status_code=404,
-                detail="Place not found",
-            )
+        _ensure_known_place(request, payload.original_name)
 
         try:
             enrichment = PlaceEnrichment(
@@ -349,6 +453,30 @@ def create_app(
     return app
 
 
+def _ensure_known_place(request: Request, original_name: str) -> None:
+    known_original_names = {entry.original_name for entry in inventory_places(_genealogy(request))}
+    if original_name not in known_original_names:
+        raise HTTPException(status_code=404, detail="Place not found")
+
+
+def _candidate_response(candidate: GeocodingCandidate, selection_token: str) -> GeocodingCandidateResponse:
+    return GeocodingCandidateResponse(
+        selection_token=selection_token, provider=candidate.provider,
+        provider_id=candidate.provider_id, display_name=candidate.display_name,
+        latitude=candidate.latitude, longitude=candidate.longitude,
+        city=candidate.city, postcode=candidate.postcode, region=candidate.region,
+        country=candidate.country, result_type=candidate.result_type,
+    )
+
+
+def _geocoder(request: Request) -> Geocoder:
+    return request.app.state.geocoder
+
+
+def _pending_geocoding_candidates(request: Request) -> _PendingGeocodingCandidates:
+    return request.app.state.pending_geocoding_candidates
+
+
 def _genealogy(request: Request) -> Genealogy:
     return request.app.state.genealogy
 
@@ -413,8 +541,12 @@ def _import_report_response(
     )
 
 
+def _configured_geocoder() -> Geocoder:
+    api_key = os.environ.get("GEOAPIFY_API_KEY")
+    return GeoapifyGeocoder(api_key) if api_key else UnavailableGeocoder()
+
+
 app = create_app(
-    place_enrichment_store=JsonPlaceEnrichmentStore(
-        Path("data/place_enrichments.json")
-    )
+    place_enrichment_store=JsonPlaceEnrichmentStore(Path("data/place_enrichments.json")),
+    geocoder=_configured_geocoder(),
 )

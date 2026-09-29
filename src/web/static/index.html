@@ -99,6 +99,28 @@
             </p>
 
             <label>
+                Requête Geoapify
+                <input
+                    id="place-geocoding-query"
+                    type="text"
+                >
+            </label>
+
+            <button
+                id="place-geocoding-search"
+                type="button"
+            >
+                Rechercher des candidats
+            </button>
+
+            <div id="place-geocoding-results" hidden></div>
+            <p id="place-geocoding-attribution" hidden>
+                Résultats fournis par
+                <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer">Geoapify</a>
+                et © les contributeurs OpenStreetMap.
+            </p>
+
+            <label>
                 Libellé normalisé
                 <input
                     id="place-enrichment-normalized-name"

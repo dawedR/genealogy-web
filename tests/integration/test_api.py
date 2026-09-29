@@ -4,6 +4,15 @@ from fastapi.testclient import TestClient
 
 from src.api.app import create_app
 from src.domain.models import Event, Family, Genealogy, Person, Place, Sex
+from src.services.geocoding import (
+    FakeGeocoder,
+    GeocodingCandidate,
+    GeocodingNetworkError,
+    GeocodingProviderError,
+    GeocodingRequestRejectedError,
+    GeocodingResponseError,
+    GeocodingTimeoutError,
+)
 from src.storage.place_enrichments import InMemoryPlaceEnrichmentStore
 
 
@@ -189,6 +198,141 @@ def test_place_enrichment_survives_rebuilt_genealogy_only_for_exact_label():
     by_name = {place["original_name"]: place for place in places.json()}
     assert by_name["Ecully"]["enrichment"]["comment"] == "Conserver"
     assert by_name["Écully"]["enrichment"] is None
+
+def test_geocoding_candidates_and_explicit_geoapify_selection():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Lyon 4 ?"))
+    )
+    candidates = [
+        GeocodingCandidate(
+            provider="geoapify",
+            provider_id="first",
+            display_name="Lyon 4e Arrondissement, France",
+            latitude=45.78,
+            longitude=4.83,
+            city="Lyon",
+            postcode="69004",
+            region="Auvergne-Rhône-Alpes",
+            country="France",
+        ),
+        GeocodingCandidate(
+            provider="geoapify",
+            provider_id="second",
+            display_name="Autre Lyon",
+            latitude=45.79,
+            longitude=4.84,
+        ),
+    ]
+    geocoder = FakeGeocoder(
+        {"Lyon 4e arrondissement, France": candidates}
+    )
+    store = InMemoryPlaceEnrichmentStore()
+
+    with TestClient(create_app(genealogy, store, geocoder)) as client:
+        searched = client.post(
+            "/geocoding/candidates",
+            json={
+                "original_name": "Lyon 4 ?",
+                "query": "Lyon 4e arrondissement, France",
+            },
+        )
+        token = searched.json()[0]["selection_token"]
+        selected = client.post(
+            "/place-enrichments/geoapify-selection",
+            json={
+                "original_name": "Lyon 4 ?",
+                "candidate_token": token,
+            },
+        )
+        places = client.get("/places")
+
+    assert geocoder.queries == [("Lyon 4e arrondissement, France", 5)]
+    assert searched.status_code == 200
+    assert len(searched.json()) == 2
+    assert searched.json()[0]["city"] == "Lyon"
+    assert selected.json() == {
+        "original_name": "Lyon 4 ?",
+        "normalized_name": "Lyon 4e Arrondissement, France",
+        "latitude": 45.78,
+        "longitude": 4.83,
+        "status": "MANUAL",
+        "source": "geoapify",
+        "confidence": None,
+        "comment": None,
+    }
+    assert places.json()[0]["enrichment"] == selected.json()
+
+
+def test_geocoding_returns_no_candidates_for_unicode_query():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Łódź, Pologne"))
+    )
+    geocoder = FakeGeocoder({"Łódź, Pologne": []})
+
+    with TestClient(create_app(genealogy, geocoder=geocoder)) as client:
+        response = client.post(
+            "/geocoding/candidates",
+            json={"original_name": "Łódź, Pologne"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == []
+    assert geocoder.queries == [("Łódź, Pologne", 5)]
+
+
+def test_geocoding_does_not_accept_an_arbitrary_candidate_token():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Ecully"))
+    )
+
+    with TestClient(create_app(genealogy, geocoder=FakeGeocoder())) as client:
+        selected = client.post(
+            "/place-enrichments/geoapify-selection",
+            json={"original_name": "Ecully", "candidate_token": "forged"},
+        )
+        missing = client.post(
+            "/geocoding/candidates",
+            json={"original_name": "Écully"},
+        )
+
+    assert selected.status_code == 404
+    assert missing.status_code == 404
+
+
+def test_geocoding_errors_are_distinct_and_safe():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Radoszyce"))
+    )
+
+    cases = [
+        (None, 503, "n’est pas configuré"),
+        (GeocodingRequestRejectedError(400), 422, "HTTP 400"),
+        (GeocodingTimeoutError(), 504, "a expiré"),
+        (GeocodingNetworkError(), 502, "réseau"),
+        (GeocodingResponseError(), 502, "impossible à interpréter"),
+        (GeocodingProviderError("détail interne"), 502, "a échoué"),
+    ]
+
+    for error, expected_status, expected_message in cases:
+        geocoder = None
+        if error is not None:
+            geocoder = FakeGeocoder()
+            geocoder.error = error
+
+        with TestClient(create_app(genealogy, geocoder=geocoder)) as client:
+            response = client.post(
+                "/geocoding/candidates",
+                json={"original_name": "Radoszyce"},
+            )
+
+        assert response.status_code == expected_status
+        assert expected_message in response.json()["detail"]
+        assert "détail interne" not in response.json()["detail"]
+
 
 def test_search_people():
     with make_client() as client:
@@ -413,6 +557,9 @@ def test_index_page():
         "place-enrichment-latitude",
         "place-enrichment-longitude",
         "place-enrichment-comment",
+        "place-geocoding-query",
+        "place-geocoding-search",
+        "place-geocoding-results",
     ):
         assert f'id="{element_id}"' in response.text
 
@@ -434,6 +581,8 @@ def test_static_javascript():
     assert "selectPlace" in response.text
     assert "optionalCoordinate" in response.text
     assert "formatPlaceEventCounts" in response.text
+    assert "renderGeocodingCandidates" in response.text
+    assert "selectGeocodingCandidate" in response.text
     assert "loadFanChart(person.id);" in response.text
     assert "renderImportDetails" in response.text
     assert "createFanGeometry" in response.text

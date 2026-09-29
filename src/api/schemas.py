@@ -71,3 +71,27 @@ class PlaceInventoryResponse(BaseModel):
     persons_count: int
     event_counts: dict[str, int]
     enrichment: PlaceEnrichmentResponse | None
+
+
+class GeocodingCandidatesRequest(BaseModel):
+    original_name: str
+    query: str | None = None
+
+
+class GeocodingCandidateResponse(BaseModel):
+    selection_token: str
+    provider: str
+    provider_id: str
+    display_name: str
+    latitude: float
+    longitude: float
+    city: str | None
+    postcode: str | None
+    region: str | None
+    country: str | None
+    result_type: str | None
+
+
+class GeocodingCandidateSelectionRequest(BaseModel):
+    original_name: str
+    candidate_token: str

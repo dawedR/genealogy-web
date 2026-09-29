@@ -27,6 +27,18 @@ const placeEnrichmentLongitude = document.querySelector(
 const placeEnrichmentComment = document.querySelector(
     "#place-enrichment-comment",
 );
+const placeGeocodingQuery = document.querySelector(
+    "#place-geocoding-query",
+);
+const placeGeocodingSearch = document.querySelector(
+    "#place-geocoding-search",
+);
+const placeGeocodingResults = document.querySelector(
+    "#place-geocoding-results",
+);
+const placeGeocodingAttribution = document.querySelector(
+    "#place-geocoding-attribution",
+);
 
 const searchForm = document.querySelector("#search-form");
 const searchQuery = document.querySelector("#search-query");
@@ -263,6 +275,43 @@ placeEnrichmentForm.addEventListener("submit", async (event) => {
 });
 
 
+placeGeocodingSearch.addEventListener("click", async () => {
+    if (selectedPlace === null) {
+        return;
+    }
+
+    const query = emptyToNull(placeGeocodingQuery.value) ||
+        selectedPlace.original_name;
+
+    placeGeocodingResults.hidden = false;
+    placeGeocodingResults.textContent = "Recherche de candidats…";
+    placeGeocodingAttribution.hidden = true;
+
+    try {
+        const response = await fetch("/geocoding/candidates", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                original_name: selectedPlace.original_name,
+                query,
+            }),
+        });
+        const candidates = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                candidates.detail || "Recherche de géocodage impossible",
+            );
+        }
+
+        renderGeocodingCandidates(candidates);
+
+    } catch (error) {
+        placeGeocodingResults.textContent = error.message;
+    }
+});
+
+
 generationsInput.addEventListener("change", () => {
     if (selectedPersonId !== null) {
         loadAncestry(selectedPersonId);
@@ -422,7 +471,96 @@ function selectPlace(place) {
     placeEnrichmentLatitude.value = enrichment?.latitude ?? "";
     placeEnrichmentLongitude.value = enrichment?.longitude ?? "";
     placeEnrichmentComment.value = enrichment?.comment || "";
+    placeGeocodingQuery.value = place.original_name;
+    placeGeocodingResults.innerHTML = "";
+    placeGeocodingResults.hidden = true;
+    placeGeocodingAttribution.hidden = true;
     placeEnrichmentForm.hidden = false;
+}
+
+
+function renderGeocodingCandidates(candidates) {
+    placeGeocodingResults.innerHTML = "";
+    placeGeocodingResults.hidden = false;
+
+    if (candidates.length === 0) {
+        placeGeocodingResults.textContent = "Aucun candidat trouvé.";
+        return;
+    }
+
+    const list = document.createElement("ul");
+    list.className = "geocoding-candidates";
+
+    for (const candidate of candidates) {
+        const item = document.createElement("li");
+        const details = document.createElement("div");
+        const administration = [
+            candidate.city,
+            candidate.postcode,
+            candidate.region,
+            candidate.country,
+        ].filter(Boolean).join(", ");
+
+        details.textContent = `${candidate.display_name} — ` +
+            `${candidate.latitude}, ${candidate.longitude}` +
+            (administration ? ` (${administration})` : "");
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Choisir ce candidat";
+        button.addEventListener("click", () => {
+            selectGeocodingCandidate(candidate.selection_token);
+        });
+
+        item.appendChild(details);
+        item.appendChild(button);
+        list.appendChild(item);
+    }
+
+    placeGeocodingResults.appendChild(list);
+    placeGeocodingAttribution.hidden = false;
+}
+
+
+async function selectGeocodingCandidate(candidateToken) {
+    if (selectedPlace === null) {
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            "/place-enrichments/geoapify-selection",
+            {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    original_name: selectedPlace.original_name,
+                    candidate_token: candidateToken,
+                }),
+            },
+        );
+        const enrichment = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                enrichment.detail || "Impossible de choisir ce candidat",
+            );
+        }
+
+        const places = await loadPlaces();
+        const updatedPlace = places.find(
+            place => place.original_name === selectedPlace.original_name,
+        );
+
+        if (updatedPlace) {
+            selectPlace(updatedPlace);
+        }
+
+        placesStatus.textContent = "Candidat Geoapify enregistré.";
+
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
 }
 
 
