@@ -1214,4 +1214,4 @@ aucune visualisation graphique complexe n'appartient à cette V0.
 
 Ces limitations ne remettent pas en cause la validation du pipeline
 architectural défini au chapitre 41. Elles doivent rester explicites lors
-des évolutions suivantes.
+des évolutions suivantes du projet.

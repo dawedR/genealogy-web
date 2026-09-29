@@ -1,7 +1,7 @@
-`**. Les spécifications disent *ce que le produit doit faire* ; ce fichier dira *ce qu'on prévoit de construire prochainement*. 
-
-```markdown
 # V1 — Points de conception et travaux à venir
+
+Les spécifications disent *ce que le produit doit faire* ; ce fichier décrit
+*ce qu'on prévoit de construire prochainement*.
 
 ## Libellés de l'éventail
 
@@ -47,8 +47,58 @@ Implémentée initialement :
 
 ## Coloration géographique
 
-La première palette OKLab utilisera une projection locale centrée sur une
-référence explicitement configurée. L’échelle V1 est fixée à
-`12 000 km par unité OKLab` : sur les lieux validés de Maurice, elle conserve
-une famille polonaise cohérente, distingue Łódź de Kielce/Radom et garde des
-variations locales discrètes. Elle ne dépend pas du jeu de données affiché.
+La palette géographique V1 utilise une amplitude chromatique continue à deux
+échelles et un mapping directionnel continu en OKLCH depuis une référence
+explicitement configurée :
+
+```text
+A(d) = regional_amplitude
+       × (1 − exp(−(d / regional_distance_km)^regional_exponent))
+       + amplitude_at_reference
+       × (d / reference_distance_km)^distance_exponent
+
+target_hue = wrap(bearing + directional_hue_offset)
+t = 1 − exp(−A / direction_transition_amplitude)
+
+hue = shortest_arc_lerp(base_hue, target_hue, t)
+chroma = lerp(base_chroma, directional_target_chroma, t)
+
+a = chroma × cos(hue)
+b = chroma × sin(hue)
+```
+
+Paramètres V1 par défaut :
+
+```text
+regional_amplitude = 0,12
+regional_distance_km = 125
+regional_exponent = 2,0
+
+reference_distance_km = 1 000
+amplitude_at_reference = 0,16
+distance_exponent = 1,35
+
+directional_hue_offset = 195°
+direction_transition_amplitude = 0,10
+directional_target_chroma = 0,18
+lightness = 0,72
+```
+
+`directional_hue_offset` est une orientation de palette chromatique, non une
+propriété géographique intrinsèque. Elle doit rester explicite et configurable.
+
+Critère perceptuel :
+
+```text
+Lyon ↔ Bron                  quasi identiques
+Noirétable ↔ Arconsat        nuances proches
+Lyon ↔ Arcens                clairement différents
+Lyon ↔ Bellegarde            clairement différents
+régions françaises distinctes → différences perceptibles
+France ↔ Pologne             très nettement différentes
+lieux polonais proches       même famille chromatique
+directions lointaines différentes → familles chromatiques différentes
+```
+
+La configuration ne dépend pas du jeu de données affiché. Le gamut mapping
+sRGB conserve une couleur représentable sans introduire de seuil géographique.

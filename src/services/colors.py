@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, cos, pi, radians, sin, sqrt
+from math import atan2, cos, exp, pi, radians, sin, sqrt
 from typing import Literal
 
 from src.domain.models import PlaceEnrichment, PlaceEnrichmentStatus
 
 
 EARTH_RADIUS_KM = 6_371.0
-DEFAULT_KILOMETERS_PER_OKLAB_UNIT = 12_000.0
+DEFAULT_REFERENCE_DISTANCE_KM = 1_000.0
+DEFAULT_AMPLITUDE_AT_REFERENCE = 0.16
+DEFAULT_DISTANCE_EXPONENT = 1.35
+DEFAULT_DIRECTIONAL_HUE_OFFSET_DEGREES = 195.0
+DEFAULT_DIRECTION_TRANSITION_AMPLITUDE = 0.10
+DEFAULT_DIRECTIONAL_TARGET_CHROMA = 0.18
+DEFAULT_REGIONAL_AMPLITUDE = 0.12
+DEFAULT_REGIONAL_DISTANCE_KM = 125.0
+DEFAULT_REGIONAL_EXPONENT = 2.0
 
 
 @dataclass(frozen=True)
@@ -28,13 +36,21 @@ class GeoPoint:
 class ColorConfiguration:
     """Stable parameters for one geographic color palette.
 
-    The V1 scale of 12,000 km per OKLab unit keeps the validated birth
-    places around Lyon and Poland in one family while retaining regional
-    variation. It is intentionally fixed rather than data-set adaptive.
+    Distance controls the chromatic amplitude; the initial bearing controls
+    a target hue in OKLCH. These parameters are deliberately fixed for one
+    configuration rather than adapted to displayed data.
     """
 
     reference: GeoPoint
-    kilometers_per_oklab_unit: float = DEFAULT_KILOMETERS_PER_OKLAB_UNIT
+    regional_amplitude: float = DEFAULT_REGIONAL_AMPLITUDE
+    regional_distance_km: float = DEFAULT_REGIONAL_DISTANCE_KM
+    regional_exponent: float = DEFAULT_REGIONAL_EXPONENT
+    reference_distance_km: float = DEFAULT_REFERENCE_DISTANCE_KM
+    amplitude_at_reference: float = DEFAULT_AMPLITUDE_AT_REFERENCE
+    distance_exponent: float = DEFAULT_DISTANCE_EXPONENT
+    directional_hue_offset_degrees: float = DEFAULT_DIRECTIONAL_HUE_OFFSET_DEGREES
+    direction_transition_amplitude: float = DEFAULT_DIRECTION_TRANSITION_AMPLITUDE
+    directional_target_chroma: float = DEFAULT_DIRECTIONAL_TARGET_CHROMA
     lightness: float = 0.72
     base_a: float = 0.035
     base_b: float = -0.02
@@ -42,8 +58,29 @@ class ColorConfiguration:
     neutral_unknown: str = "#EFEFEF"
 
     def __post_init__(self) -> None:
-        if self.kilometers_per_oklab_unit <= 0:
-            raise ValueError("kilometers_per_oklab_unit must be positive")
+        if self.regional_amplitude < 0:
+            raise ValueError("regional_amplitude must be non-negative")
+
+        if self.regional_distance_km <= 0:
+            raise ValueError("regional_distance_km must be positive")
+
+        if self.regional_exponent <= 0:
+            raise ValueError("regional_exponent must be positive")
+
+        if self.reference_distance_km <= 0:
+            raise ValueError("reference_distance_km must be positive")
+
+        if self.amplitude_at_reference < 0:
+            raise ValueError("amplitude_at_reference must be non-negative")
+
+        if self.distance_exponent <= 0:
+            raise ValueError("distance_exponent must be positive")
+
+        if self.direction_transition_amplitude <= 0:
+            raise ValueError("direction_transition_amplitude must be positive")
+
+        if self.directional_target_chroma < 0:
+            raise ValueError("directional_target_chroma must be non-negative")
 
         if not 0 <= self.lightness <= 1:
             raise ValueError("lightness must be between 0 and 1")
@@ -108,16 +145,37 @@ class ColorService:
         self._configuration = configuration
 
     def color_for_coordinates(self, point: GeoPoint) -> ColorResult:
-        east, north = project_local_kilometers(
-            point,
+        distance = haversine_distance_km(
             self._configuration.reference,
+            point,
         )
-        a = self._configuration.base_a + (
-            east / self._configuration.kilometers_per_oklab_unit
+        amplitude = _chromatic_amplitude(distance, self._configuration)
+        bearing = _initial_bearing_radians(
+            self._configuration.reference,
+            point,
         )
-        b = self._configuration.base_b - (
-            north / self._configuration.kilometers_per_oklab_unit
+        base_chroma = sqrt(
+            self._configuration.base_a ** 2
+            + self._configuration.base_b ** 2
         )
+        base_hue = atan2(
+            self._configuration.base_b,
+            self._configuration.base_a,
+        )
+        target_hue = _wrap_hue_radians(
+            bearing + radians(self._configuration.directional_hue_offset_degrees)
+        )
+        transition = 1 - exp(
+            -amplitude / self._configuration.direction_transition_amplitude
+        )
+        hue = _shortest_arc_lerp(base_hue, target_hue, transition)
+        chroma = _linear_interpolation(
+            base_chroma,
+            self._configuration.directional_target_chroma,
+            transition,
+        )
+        a = chroma * cos(hue)
+        b = chroma * sin(hue)
         red, green, blue, chroma_factor = _oklab_to_gamut_mapped_srgb(
             self._configuration.lightness,
             a,
@@ -158,6 +216,62 @@ class ColorService:
             kind="UNKNOWN_BIRTH",
         )
 
+
+
+def _chromatic_amplitude(
+    distance_km: float,
+    configuration: ColorConfiguration,
+) -> float:
+    """Scale distance continuously into an OKLab chromatic amplitude."""
+
+    regional_amplitude = configuration.regional_amplitude * (
+        1
+        - exp(
+            -(
+                distance_km / configuration.regional_distance_km
+            ) ** configuration.regional_exponent
+        )
+    )
+    continental_amplitude = configuration.amplitude_at_reference * (
+        distance_km / configuration.reference_distance_km
+    ) ** configuration.distance_exponent
+    return regional_amplitude + continental_amplitude
+
+
+def _initial_bearing_radians(
+    origin: GeoPoint,
+    destination: GeoPoint,
+) -> float:
+    """Return the initial great-circle bearing from origin to destination."""
+
+    longitude_delta = radians(
+        _wrapped_longitude_delta(destination.longitude - origin.longitude)
+    )
+    origin_latitude = radians(origin.latitude)
+    destination_latitude = radians(destination.latitude)
+    east = sin(longitude_delta) * cos(destination_latitude)
+    north = (
+        cos(origin_latitude) * sin(destination_latitude)
+        - sin(origin_latitude)
+        * cos(destination_latitude)
+        * cos(longitude_delta)
+    )
+    return atan2(east, north)
+
+
+def _wrap_hue_radians(hue: float) -> float:
+    return hue % (2 * pi)
+
+
+def _shortest_arc_lerp(start: float, target: float, factor: float) -> float:
+    """Interpolate hue on the shortest continuous arc of the OKLCH circle."""
+
+    difference = (target - start + pi) % (2 * pi) - pi
+    return _wrap_hue_radians(start + factor * difference)
+
+
+def _linear_interpolation(start: float, target: float, factor: float) -> float:
+    return start + factor * (target - start)
 
 def _wrapped_longitude_delta(delta: float) -> float:
     return (delta + 180) % 360 - 180
