@@ -956,3 +956,105 @@ def test_sosa_places_endpoint_keeps_missing_places_and_enrichment_statuses():
         (6, None, None, None),
         (7, None, None, None),
     ]
+
+
+def test_sosa_birth_place_colors_are_computed_server_side():
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name="Racine"))],
+            ),
+            "@I2@": Person(
+                id="@I2@",
+                events=[Event(type="BIRT", place=Place(original_name="Validé"))],
+            ),
+            "@I3@": Person(
+                id="@I3@",
+                events=[Event(type="BIRT", place=Place(original_name="Manuel"))],
+            ),
+        },
+        families={
+            "@F1@": Family(
+                id="@F1@",
+                children=["@I1@"],
+                father_id="@I2@",
+                mother_id="@I3@",
+            ),
+        },
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(
+        PlaceEnrichment(
+            original_name="Racine",
+            latitude=45.7484,
+            longitude=4.8256,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+    store.save(
+        PlaceEnrichment(
+            original_name="Validé",
+            latitude=46.0,
+            longitude=5.0,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+    store.save(
+        PlaceEnrichment(
+            original_name="Manuel",
+            latitude=45.0,
+            longitude=4.0,
+            status=PlaceEnrichmentStatus.MANUAL,
+        )
+    )
+
+    with TestClient(create_app(genealogy, store)) as client:
+        response = client.get(
+            "/people/@I1@/sosa",
+            params={"generations": 2, "color_mode": "BIRTH_PLACE"},
+        )
+
+    assert response.status_code == 200
+    by_sosa = {item["sosa"]: item for item in response.json()}
+    assert by_sosa[1]["color_kind"] == "GEOGRAPHIC"
+    assert by_sosa[1]["color_css"] == "#B49CB1"
+    assert by_sosa[2]["color_kind"] == "GEOGRAPHIC"
+    assert by_sosa[2]["color_css"] != by_sosa[1]["color_css"]
+    assert by_sosa[3]["color_kind"] == "UNVERIFIED_PLACE"
+    assert by_sosa[3]["color_css"] == "#D8D8D8"
+    for sosa in (4, 5, 6, 7):
+        assert by_sosa[sosa]["color_kind"] == "UNKNOWN_BIRTH"
+        assert by_sosa[sosa]["color_css"] == "#EFEFEF"
+
+
+def test_sosa_birth_place_colors_require_a_validated_root_birth_place():
+    genealogy = Genealogy(persons={"@I1@": Person(id="@I1@")})
+
+    with TestClient(create_app(genealogy)) as client:
+        response = client.get(
+            "/people/@I1@/sosa",
+            params={"color_mode": "BIRTH_PLACE"},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": (
+            "BIRTH_PLACE color mode requires a VALIDATED birth place "
+            "for the root person"
+        )
+    }
+
+
+def test_sosa_none_color_mode_preserves_monochrome_response():
+    genealogy = make_genealogy()
+
+    with TestClient(create_app(genealogy)) as client:
+        response = client.get(
+            "/people/@I3@/sosa",
+            params={"generations": 1, "color_mode": "NONE"},
+        )
+
+    assert response.status_code == 200
+    assert all(item["color_kind"] is None for item in response.json())
+    assert all(item["color_css"] is None for item in response.json())

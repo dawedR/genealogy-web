@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -46,6 +47,7 @@ from src.domain.models import (
 from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
 from src.services.ancestry_geography import build_ancestry_geography
+from src.services.colors import ColorConfiguration, ColorResult, ColorService, GeoPoint
 from src.services.search import (
     get_birth_date,
     get_birth_year,
@@ -467,6 +469,7 @@ def create_app(
             ge=1,
             le=10,
         ),
+        color_mode: Literal["NONE", "BIRTH_PLACE"] = Query(default="NONE"),
     ) -> list[SosaOccurrenceResponse]:
         current = _genealogy(request)
 
@@ -475,6 +478,17 @@ def create_app(
                 status_code=404,
                 detail="Person not found",
             )
+
+        enrichments = _place_enrichment_store(request).get_all()
+        color_service = (
+            _birth_place_color_service(
+                current,
+                person_id,
+                enrichments,
+            )
+            if color_mode == "BIRTH_PLACE"
+            else None
+        )
 
         occurrences = build_sosa_ancestry(
             current,
@@ -491,6 +505,16 @@ def create_app(
                 else None
             )
 
+            color = (
+                _color_for_birth_place(
+                    color_service,
+                    person,
+                    enrichments,
+                )
+                if color_service is not None
+                else None
+            )
+
             result.append(
                 SosaOccurrenceResponse(
                     sosa=occurrence.sosa,
@@ -500,6 +524,8 @@ def create_app(
                         if person is not None
                         else None
                     ),
+                    color_kind=color.kind if color is not None else None,
+                    color_css=color.css if color is not None else None,
                 )
             )
 
@@ -573,6 +599,58 @@ def _genealogy(request: Request) -> Genealogy:
 
 def _place_enrichment_store(request: Request) -> PlaceEnrichmentStore:
     return request.app.state.place_enrichment_store
+
+
+def _birth_place_color_service(
+    genealogy: Genealogy,
+    root_person_id: str,
+    enrichments: dict[str, PlaceEnrichment],
+) -> ColorService:
+    root_person = genealogy.persons[root_person_id]
+    birth_place = get_birth_place(root_person)
+    enrichment = (
+        enrichments.get(birth_place)
+        if birth_place is not None
+        else None
+    )
+
+    if (
+        enrichment is None
+        or enrichment.status is not PlaceEnrichmentStatus.VALIDATED
+        or enrichment.latitude is None
+        or enrichment.longitude is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "BIRTH_PLACE color mode requires a VALIDATED birth place "
+                "for the root person"
+            ),
+        )
+
+    return ColorService(
+        ColorConfiguration(
+            reference=GeoPoint(
+                enrichment.latitude,
+                enrichment.longitude,
+            )
+        )
+    )
+
+
+def _color_for_birth_place(
+    color_service: ColorService,
+    person: Person | None,
+    enrichments: dict[str, PlaceEnrichment],
+) -> ColorResult:
+    if person is None:
+        return color_service.unknown_birth_color()
+
+    birth_place = get_birth_place(person)
+    if birth_place is None:
+        return color_service.unknown_birth_color()
+
+    return color_service.color_for_enrichment(enrichments.get(birth_place))
 
 
 def _enrichment_response(

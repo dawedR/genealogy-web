@@ -78,6 +78,9 @@ const fanOpeningValue =
 const fanShowUnknown =
     document.querySelector("#fan-show-unknown");
 
+const fanColorMode =
+    document.querySelector("#fan-color-mode");
+
 const fanRenderButton =
     document.querySelector("#fan-render");
 
@@ -372,6 +375,12 @@ fanGenerations.addEventListener("change", () => {
 });
 
 fanShowUnknown.addEventListener("change", () => {
+    if (selectedPersonId !== null) {
+        loadFanChart(selectedPersonId);
+    }
+});
+
+fanColorMode.addEventListener("change", () => {
     if (selectedPersonId !== null) {
         loadFanChart(selectedPersonId);
     }
@@ -767,7 +776,8 @@ async function loadFanChart(personId) {
     try {
         const response = await fetch(
             `/people/${encodeURIComponent(personId)}` +
-            `/sosa?generations=${encodeURIComponent(generations)}`
+            `/sosa?generations=${encodeURIComponent(generations)}` +
+            `&color_mode=${encodeURIComponent(fanColorMode.value)}`
         );
 
         const occurrences = await response.json();
@@ -981,6 +991,10 @@ function addFanSector(
     );
 
     path.dataset.sosa = occurrence.sosa;
+
+    if (occurrence.color_css !== null) {
+        path.style.fill = occurrence.color_css;
+    }
 
     fanChart.appendChild(path);
 }

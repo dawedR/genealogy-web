@@ -45,6 +45,8 @@ class SosaOccurrenceResponse(BaseModel):
     sosa: int
     generation: int
     person: PersonResponse | None
+    color_kind: str | None = None
+    color_css: str | None = None
 
 class PlaceEnrichmentResponse(BaseModel):
     original_name: str
