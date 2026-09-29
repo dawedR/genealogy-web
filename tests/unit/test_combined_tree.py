@@ -3,7 +3,11 @@ import pytest
 from src.domain.models import Family, Genealogy, Person
 from src.services.combined_tree import (
     CombinedTreeOptions,
+    CycleTruncatedDiagnostic,
+    MissingPersonReferenceDiagnostic,
     TreeDiagnosticCode,
+    TreeReferenceRole,
+    TreeTraversal,
     TreeUnionPartnerRole,
     build_combined_tree,
 )
@@ -431,3 +435,217 @@ def test_sibling_selection_keeps_ids_deterministic():
     assert [union.id for union in first.union_occurrences] == [
         union.id for union in second.union_occurrences
     ]
+
+
+
+def test_ancestry_implex_keeps_two_normal_occurrences_for_the_same_person():
+    genealogy = Genealogy(
+        persons={person_id: Person(id=person_id) for person_id in ("@C@", "@A@", "@B@", "@X@")},
+        families={
+            "@ROOT@": Family(id="@ROOT@", father_id="@A@", mother_id="@B@", children=["@C@"]),
+            "@A_PARENTS@": Family(id="@A_PARENTS@", father_id="@X@", children=["@A@"]),
+            "@B_PARENTS@": Family(id="@B_PARENTS@", father_id="@X@", children=["@B@"]),
+        },
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@C@", ancestor_generations=2, descendant_generations=0, show_siblings=False),
+    )
+
+    x_occurrences = [occurrence for occurrence in tree.person_occurrences if occurrence.person_id == "@X@"]
+    assert len(x_occurrences) == 2
+    assert len({occurrence.id for occurrence in x_occurrences}) == 2
+    assert all(not occurrence.cycle_truncated for occurrence in x_occurrences)
+    assert not any(diagnostic.code is TreeDiagnosticCode.CYCLE_TRUNCATED for diagnostic in tree.diagnostics)
+
+
+def test_descendant_repetition_in_distinct_contexts_is_not_a_cycle():
+    genealogy = Genealogy(
+        persons={person_id: Person(id=person_id) for person_id in ("@A@", "@B@", "@E@", "@C@")},
+        families={
+            "@U1@": Family(id="@U1@", partners=["@A@", "@B@"], children=["@C@"]),
+            "@U2@": Family(id="@U2@", partners=["@A@", "@E@"], children=["@C@"]),
+        },
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@A@", ancestor_generations=0, descendant_generations=1, show_siblings=False),
+    )
+
+    c_occurrences = [occurrence for occurrence in tree.person_occurrences if occurrence.person_id == "@C@"]
+    assert len(c_occurrences) == 2
+    assert len({occurrence.id for occurrence in c_occurrences}) == 2
+    assert all(not occurrence.cycle_truncated for occurrence in c_occurrences)
+
+
+def test_ancestor_cycle_is_terminal_and_keeps_the_complete_path():
+    genealogy = Genealogy(
+        persons={person_id: Person(id=person_id) for person_id in ("@A@", "@B@", "@C@")},
+        families={
+            "@F1@": Family(id="@F1@", father_id="@B@", children=["@A@"]),
+            "@F2@": Family(id="@F2@", father_id="@C@", children=["@B@"]),
+            "@F3@": Family(id="@F3@", father_id="@A@", children=["@C@"]),
+        },
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@A@", ancestor_generations=3, descendant_generations=0, show_siblings=False),
+    )
+
+    terminal = [
+        occurrence
+        for occurrence in tree.person_occurrences
+        if occurrence.person_id == "@A@" and occurrence.id != "person:root"
+    ]
+    assert len(terminal) == 1
+    assert terminal[0].cycle_truncated is True
+    diagnostic = next(
+        diagnostic
+        for diagnostic in tree.diagnostics
+        if isinstance(diagnostic, CycleTruncatedDiagnostic)
+    )
+    assert diagnostic.traversal is TreeTraversal.ANCESTRY
+    assert diagnostic.occurrence_id == terminal[0].id
+    assert diagnostic.path_person_ids == ("@A@", "@B@", "@C@", "@A@")
+
+
+def test_descendant_cycle_is_terminal_and_keeps_the_complete_path():
+    genealogy = Genealogy(
+        persons={person_id: Person(id=person_id) for person_id in ("@A@", "@B@", "@C@", "@D@")},
+        families={
+            "@U1@": Family(id="@U1@", partners=["@A@", "@B@"], children=["@C@"]),
+            "@U2@": Family(id="@U2@", partners=["@C@", "@D@"], children=["@A@"]),
+        },
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@A@", ancestor_generations=0, descendant_generations=3, show_siblings=False),
+    )
+
+    diagnostic = next(
+        diagnostic
+        for diagnostic in tree.diagnostics
+        if isinstance(diagnostic, CycleTruncatedDiagnostic)
+    )
+    terminal = next(
+        occurrence
+        for occurrence in tree.person_occurrences
+        if occurrence.id == diagnostic.occurrence_id
+    )
+    assert diagnostic.traversal is TreeTraversal.DESCENT
+    assert diagnostic.path_person_ids == ("@A@", "@C@", "@A@")
+    assert terminal.person_id == "@A@"
+    assert terminal.cycle_truncated is True
+
+
+def test_direct_union_parenthood_cycle_is_not_developed():
+    genealogy = Genealogy(
+        persons={"@A@": Person(id="@A@"), "@B@": Person(id="@B@")},
+        families={"@U@": Family(id="@U@", partners=["@A@", "@B@"], children=["@A@"])},
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@A@", ancestor_generations=0, descendant_generations=3, show_siblings=False),
+    )
+
+    assert len(tree.union_occurrences) == 1
+    assert any(
+        isinstance(diagnostic, CycleTruncatedDiagnostic)
+        and diagnostic.path_person_ids == ("@A@", "@A@")
+        for diagnostic in tree.diagnostics
+    )
+
+
+def test_parent_without_reference_stays_unknown_without_diagnostic():
+    genealogy = Genealogy(
+        persons={"@R@": Person(id="@R@"), "@M@": Person(id="@M@")},
+        families={"@P@": Family(id="@P@", mother_id="@M@", children=["@R@"])},
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=0, show_siblings=False),
+    )
+
+    father = next(occurrence for occurrence in tree.person_occurrences if occurrence.id.endswith(":father"))
+    assert father.person_id is None
+    assert father.missing_person_id is None
+    assert tree.diagnostics == ()
+
+
+def test_missing_parent_reference_is_unknown_and_diagnosed():
+    genealogy = Genealogy(
+        persons={"@R@": Person(id="@R@"), "@M@": Person(id="@M@")},
+        families={"@P@": Family(id="@P@", father_id="@MISSING@", mother_id="@M@", children=["@R@"])},
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=0, show_siblings=False),
+    )
+
+    father = next(occurrence for occurrence in tree.person_occurrences if occurrence.id.endswith(":father"))
+    diagnostic = next(diagnostic for diagnostic in tree.diagnostics if isinstance(diagnostic, MissingPersonReferenceDiagnostic))
+    assert father.person_id is None
+    assert father.missing_person_id == "@MISSING@"
+    assert diagnostic.family_id == "@P@"
+    assert diagnostic.role is TreeReferenceRole.FATHER
+    assert diagnostic.occurrence_id == father.id
+
+
+def test_missing_partner_reference_is_unknown_and_diagnosed():
+    genealogy = Genealogy(
+        persons={"@A@": Person(id="@A@")},
+        families={"@U@": Family(id="@U@", partners=["@A@", "@MISSING@"])} ,
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@A@", ancestor_generations=0, descendant_generations=1, show_siblings=False),
+    )
+
+    partner = next(occurrence for occurrence in tree.person_occurrences if occurrence.id.endswith(":partner:1"))
+    diagnostic = next(diagnostic for diagnostic in tree.diagnostics if isinstance(diagnostic, MissingPersonReferenceDiagnostic))
+    assert partner.person_id is None
+    assert partner.missing_person_id == "@MISSING@"
+    assert diagnostic.role is TreeReferenceRole.PARTNER
+
+
+def test_missing_child_reference_is_unknown_and_diagnosed():
+    genealogy = Genealogy(
+        persons={"@A@": Person(id="@A@"), "@B@": Person(id="@B@")},
+        families={"@U@": Family(id="@U@", partners=["@A@", "@B@"], children=["@MISSING@"])},
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@A@", ancestor_generations=0, descendant_generations=1, show_siblings=False),
+    )
+
+    child = next(occurrence for occurrence in tree.person_occurrences if occurrence.id.endswith(":child:0"))
+    diagnostic = next(diagnostic for diagnostic in tree.diagnostics if isinstance(diagnostic, MissingPersonReferenceDiagnostic))
+    assert child.person_id is None
+    assert child.missing_person_id == "@MISSING@"
+    assert diagnostic.role is TreeReferenceRole.CHILD
+
+
+def test_cycle_and_missing_reference_diagnostics_are_deterministic():
+    genealogy = Genealogy(
+        persons={"@A@": Person(id="@A@"), "@B@": Person(id="@B@")},
+        families={
+            "@U1@": Family(id="@U1@", partners=["@A@", "@MISSING@"], children=["@B@"]),
+            "@U2@": Family(id="@U2@", partners=["@B@"], children=["@A@"]),
+        },
+    )
+    options = CombinedTreeOptions("@A@", ancestor_generations=0, descendant_generations=2, show_siblings=False)
+
+    first = build_combined_tree(genealogy, options)
+    second = build_combined_tree(genealogy, options)
+
+    assert first == second
+    assert first.diagnostics == second.diagnostics
