@@ -24,18 +24,28 @@ from fastapi import (
 from src.api.schemas import (
     AncestorPlaceOccurrenceResponse,
     AncestorResponse,
+    CombinedTreeOptionsResponse,
+    CombinedTreeResponse,
+    CycleTruncatedDiagnosticResponse,
     GeocodingCandidateResponse,
     GeocodingCandidatesRequest,
     GeocodingCandidateSelectionRequest,
     HealthResponse,
     IgnoredTagResponse,
     ImportReportResponse,
+    MissingPersonReferenceDiagnosticResponse,
+    MultipleParentFamiliesDiagnosticResponse,
     PersonResponse,
     PlaceEnrichmentResponse,
     PlaceEnrichmentValidationRequest,
     PlaceEnrichmentUpdateRequest,
     PlaceInventoryResponse,
     SosaOccurrenceResponse,
+    TreeDiagnosticResponse,
+    TreeParentChildLinkResponse,
+    TreePersonOccurrenceResponse,
+    TreeUnionOccurrenceResponse,
+    TreeUnionPartnerResponse,
 )
 from src.domain.models import (
     Genealogy,
@@ -48,6 +58,14 @@ from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
 from src.services.ancestry_geography import build_ancestry_geography
 from src.services.colors import ColorConfiguration, ColorResult, ColorService, GeoPoint
+from src.services.combined_tree import (
+    CombinedTreeOptions,
+    CycleTruncatedDiagnostic,
+    MissingPersonReferenceDiagnostic,
+    MultipleParentFamiliesDiagnostic,
+    TreeDiagnostic,
+    build_combined_tree,
+)
 from src.services.search import (
     get_birth_date,
     get_birth_year,
@@ -458,6 +476,32 @@ def create_app(
         ]
 
     @app.get(
+        "/people/{person_id}/tree",
+        response_model=CombinedTreeResponse,
+    )
+    def combined_tree(
+        person_id: str,
+        request: Request,
+        ancestor_generations: int = Query(default=4, ge=1, le=10),
+        descendant_generations: int = Query(default=3, ge=0, le=10),
+        show_siblings: bool = Query(default=True),
+    ) -> CombinedTreeResponse:
+        current = _genealogy(request)
+        if person_id not in current.persons:
+            raise HTTPException(status_code=404, detail="Person not found")
+
+        projection = build_combined_tree(
+            current,
+            CombinedTreeOptions(
+                root_person_id=person_id,
+                ancestor_generations=ancestor_generations,
+                descendant_generations=descendant_generations,
+                show_siblings=show_siblings,
+            ),
+        )
+        return _combined_tree_response(projection, current)
+
+    @app.get(
         "/people/{person_id}/sosa",
         response_model=list[SosaOccurrenceResponse],
     )
@@ -578,6 +622,101 @@ def create_app(
         ]
 
     return app
+
+
+def _combined_tree_response(
+    projection,
+    genealogy: Genealogy,
+) -> CombinedTreeResponse:
+    return CombinedTreeResponse(
+        root_occurrence_id=projection.root_occurrence_id,
+        options=CombinedTreeOptionsResponse(
+            root_person_id=projection.options.root_person_id,
+            ancestor_generations=projection.options.ancestor_generations,
+            descendant_generations=projection.options.descendant_generations,
+            show_siblings=projection.options.show_siblings,
+        ),
+        person_occurrences=[
+            _tree_person_occurrence_response(occurrence, genealogy)
+            for occurrence in projection.person_occurrences
+        ],
+        union_occurrences=[
+            TreeUnionOccurrenceResponse(
+                id=union.id,
+                family_id=union.family_id,
+                generation=union.generation,
+                partners=[
+                    TreeUnionPartnerResponse(
+                        occurrence_id=partner.occurrence_id,
+                        role=partner.role.value,
+                    )
+                    for partner in union.partners
+                ],
+            )
+            for union in projection.union_occurrences
+        ],
+        parent_child_links=[
+            TreeParentChildLinkResponse(
+                union_occurrence_id=link.union_occurrence_id,
+                child_occurrence_id=link.child_occurrence_id,
+            )
+            for link in projection.parent_child_links
+        ],
+        diagnostics=[
+            _tree_diagnostic_response(diagnostic)
+            for diagnostic in projection.diagnostics
+        ],
+    )
+
+
+def _tree_person_occurrence_response(
+    occurrence,
+    genealogy: Genealogy,
+) -> TreePersonOccurrenceResponse:
+    person = (
+        genealogy.persons.get(occurrence.person_id)
+        if occurrence.person_id is not None
+        else None
+    )
+    return TreePersonOccurrenceResponse(
+        id=occurrence.id,
+        person_id=occurrence.person_id,
+        generation=occurrence.generation,
+        missing_person_id=occurrence.missing_person_id,
+        cycle_truncated=occurrence.cycle_truncated,
+        given_names=person.given_names if person is not None else None,
+        surname=person.surname if person is not None else None,
+        sex=person.sex.value if person is not None else None,
+    )
+
+
+def _tree_diagnostic_response(
+    diagnostic: TreeDiagnostic,
+) -> TreeDiagnosticResponse:
+    if isinstance(diagnostic, MultipleParentFamiliesDiagnostic):
+        return MultipleParentFamiliesDiagnosticResponse(
+            code=diagnostic.code.value,
+            person_id=diagnostic.person_id,
+            family_ids=list(diagnostic.family_ids),
+            selected_family_id=diagnostic.selected_family_id,
+        )
+    if isinstance(diagnostic, CycleTruncatedDiagnostic):
+        return CycleTruncatedDiagnosticResponse(
+            code=diagnostic.code.value,
+            person_id=diagnostic.person_id,
+            occurrence_id=diagnostic.occurrence_id,
+            traversal=diagnostic.traversal.value,
+            path_person_ids=list(diagnostic.path_person_ids),
+        )
+    if isinstance(diagnostic, MissingPersonReferenceDiagnostic):
+        return MissingPersonReferenceDiagnosticResponse(
+            code=diagnostic.code.value,
+            family_id=diagnostic.family_id,
+            missing_person_id=diagnostic.missing_person_id,
+            role=diagnostic.role.value,
+            occurrence_id=diagnostic.occurrence_id,
+        )
+    raise TypeError(f"Unsupported tree diagnostic: {diagnostic!r}")
 
 
 def _ensure_known_place(request: Request, original_name: str) -> None:

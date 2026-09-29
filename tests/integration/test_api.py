@@ -1226,3 +1226,197 @@ def test_sosa_geographic_fields_keep_unverified_places_separate():
         "Même libellé normalisé"
     }
     assert {item["color_css"] for item in unverified} == {"#D8D8D8"}
+
+
+
+def tree_api_genealogy() -> Genealogy:
+    return Genealogy(
+        persons={
+            "@R@": Person(id="@R@", given_names="Racine", surname="Test", sex=Sex.MALE),
+            "@F@": Person(id="@F@", given_names="Père", surname="Test", sex=Sex.MALE),
+            "@M@": Person(id="@M@", given_names="Mère", surname="Test", sex=Sex.FEMALE),
+            "@S@": Person(id="@S@", given_names="Conjointe", surname="Test", sex=Sex.FEMALE),
+            "@C@": Person(id="@C@", given_names="Enfant", surname="Test", sex=Sex.UNKNOWN),
+            "@SB@": Person(id="@SB@", given_names="Frère", surname="Test", sex=Sex.MALE),
+        },
+        families={
+            "@P@": Family(
+                id="@P@",
+                father_id="@F@",
+                mother_id="@M@",
+                children=["@R@", "@SB@"],
+            ),
+            "@U@": Family(
+                id="@U@",
+                partners=["@R@", "@S@"],
+                father_id="@R@",
+                mother_id="@S@",
+                children=["@C@"],
+            ),
+        },
+    )
+
+
+def test_tree_endpoint_serializes_simple_projection_and_person_details():
+    with TestClient(create_app(tree_api_genealogy())) as client:
+        response = client.get(
+            "/people/@R@/tree",
+            params={
+                "ancestor_generations": 1,
+                "descendant_generations": 1,
+                "show_siblings": "false",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["root_occurrence_id"] == "person:root"
+    assert data["options"] == {
+        "root_person_id": "@R@",
+        "ancestor_generations": 1,
+        "descendant_generations": 1,
+        "show_siblings": False,
+    }
+    root = next(item for item in data["person_occurrences"] if item["id"] == "person:root")
+    assert root == {
+        "id": "person:root",
+        "person_id": "@R@",
+        "generation": 0,
+        "missing_person_id": None,
+        "cycle_truncated": False,
+        "given_names": "Racine",
+        "surname": "Test",
+        "sex": "M",
+    }
+    assert [item["family_id"] for item in data["union_occurrences"]] == ["@P@", "@U@"]
+    assert any(
+        link["union_occurrence_id"] == "union:person:root:family:@U@"
+        for link in data["parent_child_links"]
+    )
+    assert data["diagnostics"] == []
+
+
+def test_tree_endpoint_honours_independent_depths_and_sibling_option():
+    genealogy = tree_api_genealogy()
+    with TestClient(create_app(genealogy)) as client:
+        without_siblings = client.get(
+            "/people/@R@/tree",
+            params={"ancestor_generations": 2, "descendant_generations": 0, "show_siblings": "false"},
+        )
+        with_siblings = client.get(
+            "/people/@R@/tree",
+            params={"ancestor_generations": 2, "descendant_generations": 0, "show_siblings": "true"},
+        )
+
+    assert without_siblings.status_code == 200
+    assert with_siblings.status_code == 200
+    assert {item["generation"] for item in without_siblings.json()["person_occurrences"]} == {-1, 0}
+    assert [item["person_id"] for item in without_siblings.json()["person_occurrences"]] == ["@R@", "@F@", "@M@"]
+    assert [item["person_id"] for item in with_siblings.json()["person_occurrences"]] == ["@R@", "@F@", "@M@", "@SB@"]
+    assert all(
+        item["family_id"] != "@U@"
+        for item in with_siblings.json()["union_occurrences"]
+    )
+
+
+def test_tree_endpoint_serializes_multiple_unions_and_children_by_union():
+    genealogy = Genealogy(
+        persons={person_id: Person(id=person_id) for person_id in ("@A@", "@B@", "@E@", "@C@", "@D@", "@F@")},
+        families={
+            "@U2@": Family(id="@U2@", partners=["@A@", "@E@"], children=["@F@"]),
+            "@U1@": Family(id="@U1@", partners=["@A@", "@B@"], children=["@C@", "@D@"]),
+        },
+    )
+    with TestClient(create_app(genealogy)) as client:
+        response = client.get(
+            "/people/@A@/tree",
+            params={"ancestor_generations": 1, "descendant_generations": 1, "show_siblings": "false"},
+        )
+
+    data = response.json()
+    people = {item["id"]: item["person_id"] for item in data["person_occurrences"]}
+    children_by_union = {
+        union["family_id"]: [
+            people[link["child_occurrence_id"]]
+            for link in data["parent_child_links"]
+            if link["union_occurrence_id"] == union["id"]
+        ]
+        for union in data["union_occurrences"]
+    }
+    assert children_by_union == {"@U1@": ["@C@", "@D@"], "@U2@": ["@F@"]}
+
+
+def test_tree_endpoint_serializes_unknown_and_broken_parent_references():
+    unknown = Genealogy(
+        persons={"@R@": Person(id="@R@"), "@M@": Person(id="@M@")},
+        families={"@P@": Family(id="@P@", mother_id="@M@", children=["@R@"])},
+    )
+    broken = Genealogy(
+        persons={"@R@": Person(id="@R@"), "@M@": Person(id="@M@")},
+        families={"@P@": Family(id="@P@", father_id="@MISSING@", mother_id="@M@", children=["@R@"])},
+    )
+    params = {"ancestor_generations": 1, "descendant_generations": 0, "show_siblings": "false"}
+    with TestClient(create_app(unknown)) as client:
+        unknown_response = client.get("/people/@R@/tree", params=params)
+    with TestClient(create_app(broken)) as client:
+        broken_response = client.get("/people/@R@/tree", params=params)
+
+    unknown_father = next(item for item in unknown_response.json()["person_occurrences"] if item["id"].endswith(":father"))
+    assert unknown_father["person_id"] is None
+    assert unknown_father["missing_person_id"] is None
+    assert unknown_father["given_names"] is None
+    assert unknown_response.json()["diagnostics"] == []
+
+    broken_father = next(item for item in broken_response.json()["person_occurrences"] if item["id"].endswith(":father"))
+    assert broken_father["person_id"] is None
+    assert broken_father["missing_person_id"] == "@MISSING@"
+    assert broken_response.json()["diagnostics"] == [{
+        "code": "MISSING_PERSON_REFERENCE",
+        "family_id": "@P@",
+        "missing_person_id": "@MISSING@",
+        "role": "FATHER",
+        "occurrence_id": broken_father["id"],
+    }]
+
+
+def test_tree_endpoint_serializes_cycle_diagnostic_and_is_deterministic():
+    genealogy = Genealogy(
+        persons={person_id: Person(id=person_id) for person_id in ("@A@", "@B@", "@C@", "@D@")},
+        families={
+            "@U1@": Family(id="@U1@", partners=["@A@", "@B@"], children=["@C@"]),
+            "@U2@": Family(id="@U2@", partners=["@C@", "@D@"], children=["@A@"]),
+        },
+    )
+    params = {"ancestor_generations": 1, "descendant_generations": 3, "show_siblings": "false"}
+    with TestClient(create_app(genealogy)) as client:
+        first = client.get("/people/@A@/tree", params=params)
+        second = client.get("/people/@A@/tree", params=params)
+
+    assert first.status_code == 200
+    assert first.json() == second.json()
+    diagnostic = next(
+        item
+        for item in first.json()["diagnostics"]
+        if item["code"] == "CYCLE_TRUNCATED"
+    )
+    assert diagnostic["traversal"] == "DESCENT"
+    assert diagnostic["path_person_ids"] == ["@A@", "@C@", "@A@"]
+    terminal = next(
+        item
+        for item in first.json()["person_occurrences"]
+        if item["id"] == diagnostic["occurrence_id"]
+    )
+    assert terminal["cycle_truncated"] is True
+
+
+def test_tree_endpoint_reports_missing_root_and_invalid_parameters():
+    with make_client() as client:
+        missing = client.get("/people/@UNKNOWN@/tree")
+        invalid_ancestor_low = client.get("/people/@I3@/tree", params={"ancestor_generations": 0})
+        invalid_ancestor_high = client.get("/people/@I3@/tree", params={"ancestor_generations": 11})
+        invalid_descendant = client.get("/people/@I3@/tree", params={"descendant_generations": 11})
+
+    assert missing.status_code == 404
+    assert invalid_ancestor_low.status_code == 422
+    assert invalid_ancestor_high.status_code == 422
+    assert invalid_descendant.status_code == 422

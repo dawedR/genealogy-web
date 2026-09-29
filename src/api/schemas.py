@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -112,3 +114,77 @@ class AncestorPlaceOccurrenceResponse(BaseModel):
     person_id: str | None
     birth_place_original_name: str | None
     enrichment: PlaceEnrichmentResponse | None
+
+
+class CombinedTreeOptionsResponse(BaseModel):
+    root_person_id: str
+    ancestor_generations: int
+    descendant_generations: int
+    show_siblings: bool
+
+
+class TreePersonOccurrenceResponse(BaseModel):
+    id: str
+    person_id: str | None
+    generation: int
+    missing_person_id: str | None
+    cycle_truncated: bool
+    given_names: str | None
+    surname: str | None
+    sex: str | None
+
+
+class TreeUnionPartnerResponse(BaseModel):
+    occurrence_id: str
+    role: str
+
+
+class TreeUnionOccurrenceResponse(BaseModel):
+    id: str
+    family_id: str
+    generation: int
+    partners: list[TreeUnionPartnerResponse]
+
+
+class TreeParentChildLinkResponse(BaseModel):
+    union_occurrence_id: str
+    child_occurrence_id: str
+
+
+class MultipleParentFamiliesDiagnosticResponse(BaseModel):
+    code: Literal["MULTIPLE_PARENT_FAMILIES"]
+    person_id: str
+    family_ids: list[str]
+    selected_family_id: str
+
+
+class CycleTruncatedDiagnosticResponse(BaseModel):
+    code: Literal["CYCLE_TRUNCATED"]
+    person_id: str
+    occurrence_id: str
+    traversal: str
+    path_person_ids: list[str]
+
+
+class MissingPersonReferenceDiagnosticResponse(BaseModel):
+    code: Literal["MISSING_PERSON_REFERENCE"]
+    family_id: str
+    missing_person_id: str
+    role: str
+    occurrence_id: str
+
+
+TreeDiagnosticResponse = (
+    MultipleParentFamiliesDiagnosticResponse
+    | CycleTruncatedDiagnosticResponse
+    | MissingPersonReferenceDiagnosticResponse
+)
+
+
+class CombinedTreeResponse(BaseModel):
+    root_occurrence_id: str
+    options: CombinedTreeOptionsResponse
+    person_occurrences: list[TreePersonOccurrenceResponse]
+    union_occurrences: list[TreeUnionOccurrenceResponse]
+    parent_child_links: list[TreeParentChildLinkResponse]
+    diagnostics: list[TreeDiagnosticResponse]
