@@ -378,6 +378,56 @@ Les données disponibles doivent notamment pouvoir inclure :
 - lieu de décès ;
 - numéro Sosa.
 
+### Dégradation du contenu selon la génération
+
+Le niveau de détail d'un secteur ne doit pas nécessairement être uniforme
+pour toutes les générations.
+
+Les générations proches de la personne souche disposent généralement de
+davantage d'espace et peuvent afficher des informations plus détaillées,
+par exemple :
+
+- numéro Sosa ;
+- prénom et nom ;
+- date et lieu de naissance ;
+- date et lieu de décès.
+
+Pour les générations plus éloignées, le contenu peut être progressivement
+réduit, par exemple :
+
+- prénom et nom ;
+- années de naissance et de décès ;
+- puis informations essentielles uniquement.
+
+Deux mécanismes doivent rester distincts :
+
+1. **politique de contenu par génération** : détermine les informations que
+   l'on souhaite afficher pour une génération ou une plage de générations ;
+2. **dégradation automatique faute de place** : adapte ce contenu lorsque
+   le secteur ne permet pas de l'afficher intégralement.
+
+La dégradation automatique peut notamment suivre l'ordre suivant :
+
+```text
+date complète
+    ↓
+année seule
+    ↓
+suppression des informations secondaires
+    ↓
+abréviation du prénom
+    ↓
+ellipse en dernier recours
+```
+
+Une évolution pourra proposer :
+- un mode automatique avec une politique par défaut ;
+- un mode uniforme ;
+- un mode personnalisé permettant de définir le contenu par plages de
+  générations.
+Le choix final doit également pouvoir tenir compte de l'espace physique
+réellement disponible dans la visualisation ou le format d'export.
+
 ### Priorité
 
 V1
