@@ -15,6 +15,7 @@ class CombinedTreeOptions:
     root_person_id: str
     ancestor_generations: int
     descendant_generations: int
+    show_siblings: bool = True
 
     def __post_init__(self) -> None:
         if self.ancestor_generations < 0:
@@ -120,9 +121,10 @@ def build_combined_tree(
 ) -> CombinedTree:
     """Select a renderer-independent combined tree around one root person.
 
-    This initial V3 projection includes ancestry and the root person's own
-    descendant families. It deliberately does not yet expand siblings,
-    resolve cycles, or add presentation data such as portraits and colours.
+    This V3 projection includes ancestry, the root person's descendant
+    families, and optionally the children of the root's canonical parent
+    family. It deliberately does not yet resolve cycles or add presentation
+    data such as portraits and colours.
     """
 
     if options.root_person_id not in genealogy.persons:
@@ -132,6 +134,9 @@ def build_combined_tree(
     unions: list[TreeUnionOccurrence] = []
     parent_child_links: list[TreeParentChildLink] = []
     diagnostics: list[TreeDiagnostic] = []
+    parent_selections: dict[str, _CanonicalParentFamilySelection] = {}
+    diagnostic_person_ids: set[str] = set()
+    parent_union_ids: dict[str, str] = {}
 
     root = TreePersonOccurrence(
         id="person:root",
@@ -153,6 +158,29 @@ def build_combined_tree(
         people.append(occurrence)
         return occurrence
 
+    def canonical_parent_family_for(
+        person_id: str,
+    ) -> _CanonicalParentFamilySelection:
+        selection = parent_selections.get(person_id)
+        if selection is None:
+            selection = select_canonical_parent_family(genealogy, person_id)
+            parent_selections[person_id] = selection
+        if (
+            len(selection.candidate_family_ids) > 1
+            and person_id not in diagnostic_person_ids
+            and selection.family is not None
+        ):
+            diagnostics.append(
+                TreeDiagnostic(
+                    code=TreeDiagnosticCode.MULTIPLE_PARENT_FAMILIES,
+                    person_id=person_id,
+                    family_ids=selection.candidate_family_ids,
+                    selected_family_id=selection.family.id,
+                )
+            )
+            diagnostic_person_ids.add(person_id)
+        return selection
+
     def add_parent_ancestry(
         child: TreePersonOccurrence,
         depth: int,
@@ -160,20 +188,10 @@ def build_combined_tree(
         if depth >= options.ancestor_generations or child.person_id is None:
             return
 
-        selection = select_canonical_parent_family(genealogy, child.person_id)
+        selection = canonical_parent_family_for(child.person_id)
         family = selection.family
         if family is None:
             return
-
-        if len(selection.candidate_family_ids) > 1:
-            diagnostics.append(
-                TreeDiagnostic(
-                    code=TreeDiagnosticCode.MULTIPLE_PARENT_FAMILIES,
-                    person_id=child.person_id,
-                    family_ids=selection.candidate_family_ids,
-                    selected_family_id=family.id,
-                )
-            )
 
         union_id = f"union:{child.id}:parents:{family.id}"
         father = add_person(
@@ -186,6 +204,7 @@ def build_combined_tree(
             family.mother_id,
             child.generation - 1,
         )
+        parent_union_ids[child.id] = union_id
         unions.append(
             TreeUnionOccurrence(
                 id=union_id,
@@ -211,19 +230,10 @@ def build_combined_tree(
         person: TreePersonOccurrence,
         depth: int,
     ) -> None:
-        if person.person_id is None:
+        if person.person_id is None or depth >= options.descendant_generations:
             return
 
-        families = sorted(
-            (
-                family
-                for family in genealogy.families.values()
-                if person.person_id in family.partners
-            ),
-            key=lambda family: family.id,
-        )
-
-        for family in families:
+        for family in _partner_families(genealogy, person.person_id):
             union_id = f"union:{person.id}:family:{family.id}"
             partners: list[TreeUnionPartner] = []
             used_current_person = False
@@ -255,9 +265,6 @@ def build_combined_tree(
                 )
             )
 
-            if depth >= options.descendant_generations:
-                continue
-
             for index, child_id in enumerate(family.children):
                 child = add_person(
                     f"person:{union_id}:child:{index}",
@@ -273,7 +280,36 @@ def build_combined_tree(
                 add_descendant_families(child, depth + 1)
 
     add_parent_ancestry(root, depth=0)
-    add_descendant_families(root, depth=0)
+
+    descendant_roots = [root]
+    if options.show_siblings:
+        root_parent_family = canonical_parent_family_for(root.person_id).family
+        if root_parent_family is not None:
+            descendant_roots = []
+            parent_union_id = parent_union_ids.get(root.id)
+            for index, child_id in enumerate(root_parent_family.children):
+                if child_id == root.person_id:
+                    sibling = root
+                else:
+                    sibling = add_person(
+                        (
+                            "person:root:parent-family:"
+                            f"{root_parent_family.id}:child:{index}"
+                        ),
+                        child_id,
+                        0,
+                    )
+                if parent_union_id is not None and sibling.id != root.id:
+                    parent_child_links.append(
+                        TreeParentChildLink(
+                            union_occurrence_id=parent_union_id,
+                            child_occurrence_id=sibling.id,
+                        )
+                    )
+                descendant_roots.append(sibling)
+
+    for descendant_root in descendant_roots:
+        add_descendant_families(descendant_root, depth=0)
 
     return CombinedTree(
         root_occurrence_id=root.id,
@@ -291,3 +327,21 @@ def _partner_role(family: Family, person_id: str) -> TreeUnionPartnerRole:
     if person_id == family.mother_id:
         return TreeUnionPartnerRole.MOTHER
     return TreeUnionPartnerRole.UNSPECIFIED
+
+
+def _partner_families(genealogy: Genealogy, person_id: str) -> list[Family]:
+    """Return a person's partner families in the V3 deterministic fallback order.
+
+    The current domain model does not preserve the source order of FAMS
+    references. Family.id is therefore used only as a stable fallback, never
+    as a claim about GEDCOM ordering.
+    """
+
+    return sorted(
+        (
+            family
+            for family in genealogy.families.values()
+            if person_id in family.partners
+        ),
+        key=lambda family: family.id,
+    )
