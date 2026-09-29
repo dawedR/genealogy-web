@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Arbre Généalogique Combiné</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 1em; }
+	.controls {
+	  display: flex;
+	  flex-direction: column;
+	  gap: 0.5em;
+	}
+	.controls-row {
+	  display: flex;
+	  flex-wrap: wrap;
+	  gap: 0.5em 1em;
+	  align-items: center;
+	}
+    #tree { width:100%; height:90vh; border:1px solid #ccc; cursor:grab; }
+    .person rect { fill:#f8f8f8; stroke:#aaa; rx:8; ry:8; }
+    .person image {
+	  width: 120px;
+	  height: 120px;
+	  object-fit: cover;
+	  /*clip-path: inset(0 round 8px);*/  /* arrondi identique aux boîtes */
+	}
+    .person text { font-size:12px; text-anchor:middle; }
+	.spinner {
+	  display: inline-block;
+	  vertical-align: middle;
+	  margin-left: 0.5em;
+	  width: 16px;
+	  height: 16px;
+	  border: 2px solid #f3f3f3;
+	  border-top: 2px solid #333;
+	  border-radius: 50%;
+	  animation: spin 0.6s linear infinite;
+	}
+	
+	@keyframes spin {
+	  from { transform: rotate(0deg); }
+	  to   { transform: rotate(360deg); }
+	}
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://unpkg.com/svg2pdf.js/dist/svg2pdf.umd.min.js"></script>
+</head>
+<body>
+	<div class="controls">
+	  <div class="controls-row">
+	   <label>Individu souche : <select id="rootSelect" onchange="reloadTree()"></select></label>
+	    <label>Gén. ascendance : <input type="number" id="maxAsc" value="4" min="1" max="10" onchange="reloadTree()"></label>
+	    <label>Gén. descendance : <input type="number" id="maxDesc" value="3" min="0" max="10" onchange="reloadTree()"></label>
+	    <label>Couleur asc. : <input type="color" id="ascColor" value="#333333" onchange="reloadTree()"></label>
+	    <label>Couleur desc. : <input type="color" id="descColor" value="#333333" onchange="reloadTree()"></label>
+	    <label>
+		<input type="checkbox" id="scaleDisplay" checked onchange="reloadTree()">
+		Afficher l'échelle des générations
+		</label>
+		<button onclick="resetZoom()">Reset Zoom</button>
+    	
+	  </div>
+	  <div class="controls-row">
+    <label>Format papier :
+    	<select id="paperSize">
+	    	<option value="A0">A0</option>
+	    	<option value="A1" selected>A1</option>
+	    	<option value="A2">A2</option>
+	    	<option value="A3">A3</option>
+	    	<option value="A4">A4</option>
+    	</select>
+    </label>
+    <label>
+		<input type="checkbox" id="landscapeCheckbox" checked>
+		Paysage
+	</label>
+	<button id="btn_png" onclick="exportImage('png')">Export PNG<span id="spinner_png" class="spinner" style="display:none;"></span></button>
+	<button id="btn_svg" onclick="exportImage('svg')">Export SVG<span id="spinner_svg" class="spinner" style="display:none;"></span></button>
+	<button id="btn_pdf" onclick="exportImage('pdf')">Export PDF<span id="spinner_pdf" class="spinner" style="display:none;"></span></button>
+	</div>
+	</div>
+  <svg id="tree" xmlns="http://www.w3.org/2000/svg"></svg>
+
+  <script src="https://unpkg.com/parse-gedcom@1.0.5/dist/index.umd.js"></script>
+  <script>
+	// --- Constantes disposition ---
+	const BOX_W = 140, BOX_H = 200, HALF_W = BOX_W / 2;
+	const ASC_SCALE_Y = 300;
+	// Descendance depuis descendance_svg.html
+	const VERTICAL_SPOUSE_GAP = 25;
+	const VERTICAL_CHILDREN_GAP = 100;
+	const GENERATION_SPACING_DESC = BOX_H + VERTICAL_SPOUSE_GAP + BOX_H + VERTICAL_CHILDREN_GAP;
+	const DESC_SCALE_Y = GENERATION_SPACING_DESC;
+	const INTERFAMILIAL_GAP = 0.1; // Larger gap to prevent overlap
+	const DESC_ASC_GAP = 200;
+	const SCALE_X = 180;
+	const OFFSET = 0;
+	
+	let indiMap = {}, famMap = {}, currentViewBox = [0, 0, 0, 0], initialViewBox;
+	
+	function createSVG(tag, attrs = {}) {
+	    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+	    for (let k in attrs)
+	        if (attrs[k] != null)
+	            el.setAttribute(k, attrs[k]);
+	    return el;
+	}
+	
+	function formatDate(d) {
+	    if (!d)
+	        return '';
+	    const M = {
+	        JAN: 'JAN',
+	        FEB: 'FEV',
+	        MAR: 'MAR',
+	        APR: 'AVR',
+	        MAY: 'MAI',
+	        JUN: 'JUIN',
+	        JUL: 'JUIL',
+	        AUG: 'AOUT',
+	        SEP: 'SEPT',
+	        OCT: 'OCT',
+	        NOV: 'NOV',
+	        DEC: 'DEC'
+	    };
+	    return d.replace(/\b0?(\d)\b/, '$1').replace(/\b([A-Z]{3})\b/, m => M[m] || m);
+	}
+	
+	function formatName(person) {
+	    const fullName = person.name;
+	    let surname = "";
+	    let firstnames = fullName;
+	
+	    const match = fullName.match(/\/(.*?)\//);
+	    if (match) {
+	        surname = match[1].trim().toLowerCase() === 'x' ? '' : match[1].trim();
+	        firstnames = fullName.replace(/\/.+?\//, '').trim();
+	    }
+	
+	    const tokens = firstnames.split(/\s+/);
+	    const displayFirst = person.givn || tokens[0] || '';
+	    return `${displayFirst} ${surname.toUpperCase()}`.trim() === 'x' ? '' : `${displayFirst} ${surname.toUpperCase()}`.trim();
+	}
+	
+	function parseGedcomText(txt) {
+	    const parsed = parseGedcom.parse(txt);
+	    const nodes = Array.isArray(parsed) ? parsed : parsed.tree || [];
+	    indiMap = {};
+	    famMap = {};
+	    nodes.forEach(n => {
+	        if (n.tag === 'INDI') {
+	            const t = n.tree || [],
+	            nm = t.find(x => x.tag === 'NAME') || {};
+	            const id = n.pointer;
+	            indiMap[id] = {
+	                id,
+	                name: nm.data || '',
+	                givn: (nm.tree || []).find(x => x.tag === 'GIVN')?.data || '',
+	                sex: t.find(x => x.tag === 'SEX')?.data || '',
+	                birth: formatDate(t.find(x => x.tag === 'BIRT')?.tree.find(x => x.tag === 'DATE')?.data),
+	                death: formatDate(t.find(x => x.tag === 'DEAT')?.tree.find(x => x.tag === 'DATE')?.data),
+	                fams: t.filter(x => x.tag === 'FAMS').map(x => x.data),
+	                famc: t.filter(x => x.tag === 'FAMC').map(x => x.data)
+	            };
+	        }
+	        if (n.tag === 'FAM') {
+	            const t = n.tree || [],
+	            id = n.pointer;
+	            famMap[id] = {
+	                husb: t.find(x => x.tag === 'HUSB')?.data,
+	                wife: t.find(x => x.tag === 'WIFE')?.data,
+	                children: t.filter(x => x.tag === 'CHIL').map(x => x.data)
+	            };
+	        }
+	    });
+	    populateRoot();
+	    reloadTree();
+	}
+	
+	function populateRoot() {
+	    const sel = document.getElementById('rootSelect');
+	    sel.innerHTML = '';
+	    Object.values(indiMap).forEach(p => sel.appendChild(new Option(formatName(p), p.id)));
+	    sel.selectedIndex = 0;
+	}
+	
+	// --- Ascendance inchangée ---
+	function buildAsc(p, gen, max) {
+	    if (!p || gen > max)
+	        return null;
+	    const f = famMap[p.famc[0]] || {};
+	    return {
+	        person: p,
+	        gen,
+	        x: 0,
+	        father: f.husb ? buildAsc(indiMap[f.husb], gen + 1, max) : null,
+	        mother: f.wife ? buildAsc(indiMap[f.wife], gen + 1, max) : null
+	    };
+	}
+	function assignAsc(node, x = 0) {
+	    if (!node.father && !node.mother) {
+	        node.x = x;
+	        return x + 1;
+	    }
+	    let cur = x;
+	    if (node.father)
+	        cur = assignAsc(node.father, cur);
+	    if (node.mother)
+	        cur = assignAsc(node.mother, cur);
+	    node.x = ((node.father?.x || 0) + (node.mother?.x || 0)) / 2;
+	    return cur;
+	}
+	function renderAsc(node, svg, max) {
+	    if (!node)
+	        return;
+	    if (node.gen > 0) {
+	        const x = node.x * SCALE_X;
+	        const y = (max - node.gen) * ASC_SCALE_Y;
+	        renderPerson(node.person, x, y, svg);
+	        const col = document.getElementById('ascColor').value;
+	        const cx = x + HALF_W,
+	        cy = y;
+	        const hy = cy - VERTICAL_CHILDREN_GAP / 2;
+	        if (node.gen < +document.getElementById('maxAsc').value)
+	            // Ligne verticale du dessus : sauf si génération la plus haute
+	            svg.appendChild(createSVG('line', {
+	                    x1: cx,
+	                    y1: cy,
+	                    x2: cx,
+	                    y2: hy,
+	                    stroke: col,
+	                    'stroke-width': 2
+	                }));
+	        // Ligne verticale du dessous : systématique
+	        svg.appendChild(createSVG('line', {
+	                x1: cx,
+	                y1: cy + BOX_H,
+	                x2: cx,
+	                y2: cy + BOX_H + VERTICAL_CHILDREN_GAP / 2,
+	                stroke: col,
+	                'stroke-width': 2
+	            }));
+	        const pts = [];
+	        if (node.father)
+	            pts.push([node.father.x * SCALE_X + HALF_W, (max - node.father.gen) * ASC_SCALE_Y + BOX_H]);
+	        if (node.mother)
+	            pts.push([node.mother.x * SCALE_X + HALF_W, (max - node.mother.gen) * ASC_SCALE_Y + BOX_H]);
+	        if (pts.length) {
+	            const minX = Math.min(...pts.map(p => p[0])),
+	            maxX = Math.max(...pts.map(p => p[0]));
+	            // Ligne horizontale liant les parents
+	            svg.appendChild(createSVG('line', {
+	                    x1: minX,
+	                    y1: hy,
+	                    x2: maxX,
+	                    y2: hy,
+	                    stroke: col,
+	                    'stroke-width': 2
+	                }));
+	        }
+	    }
+	    renderAsc(node.father, svg, max);
+	    renderAsc(node.mother, svg, max);
+	}
+	
+	function renderCenter(svg, xCenter, xBegin, xEnd) {
+	    // A mettre dans une fonction renderCenter
+	    const col = document.getElementById('ascColor').value;
+	    const maxA = +document.getElementById('maxAsc').value;
+	    const hA = maxA * ASC_SCALE_Y + OFFSET;
+	    const topChildrenDesc = hA + DESC_ASC_GAP - VERTICAL_CHILDREN_GAP / 2;
+	    const largeurParents = Math.pow(2, maxA - 1) * SCALE_X;
+	    const centrePere = (Math.pow(2, maxA - 2) - 0.5) * SCALE_X + HALF_W;
+	    const centreMere = centrePere + largeurParents;
+	
+	    // Ligne horizontale rejoignant les parents de l'individu racine
+	    svg.appendChild(createSVG('line', {
+	            x1: centrePere,
+	            y1: hA - VERTICAL_CHILDREN_GAP / 2,
+	            x2: centreMere,
+	            y2: hA - VERTICAL_CHILDREN_GAP / 2,
+	            stroke: col,
+	            'stroke-width': 2
+	        }));
+	    // Ligne verticale des parents de l'individu souche vers leurs enfants
+	    svg.appendChild(createSVG('line', {
+	            x1: xCenter,
+	            y1: topChildrenDesc - DESC_ASC_GAP,
+	            x2: xCenter,
+	            y2: topChildrenDesc,
+	            stroke: col,
+	            'stroke-width': 2
+	        }));
+	    // Ligne horizontale rejoignant tous les enfants de la fratrie de l'individu racine
+	    svg.appendChild(createSVG('line', {
+	            x1: xBegin,
+	            y1: topChildrenDesc,
+	            x2: xEnd,
+	            y2: topChildrenDesc,
+	            stroke: col,
+	            'stroke-width': 2
+	        }));
+	
+	}
+	
+	function renderGenScale(svg, xPos, middle, height) {
+	
+	    const col = '#095adc';
+	    const maxA = +document.getElementById('maxAsc').value;
+	    const maxD = +document.getElementById('maxDesc').value;
+	    const tick = 150; // longueur des traits horizontaux
+	    const fontSz = 14; // taille du texte//TODO : ajouter des traits horizontaux à chaque début / fin de génération, avec un texte indiquant : Ascendance, nième génération (dépendant de la génération max)
+		const legendOffset = 30;
+		
+		function appendLegendText(y, label) {
+		  const txt = createSVG('text', {
+		    x: xPos + legendOffset,
+		    y,
+		    'text-anchor': 'start',
+		    'font-size': fontSz,
+			'font-weight' : 'bold'
+		  });
+		  txt.textContent = label;
+		  svg.appendChild(txt);
+		}
+		
+		function appendTick(y) {
+		  svg.appendChild(createSVG('line', {
+	            x1: xPos,
+	            y1: y,
+	            x2: xPos + tick,
+	            y2: y,
+	            stroke: col,
+	            'stroke-width': 2
+	        }));
+		}
+		
+	    // Ligne verticale
+	    svg.appendChild(createSVG('line', {
+	            x1: xPos,
+	            y1: - VERTICAL_CHILDREN_GAP / 2,
+	            x2: xPos,
+	            y2: middle + BOX_H + DESC_ASC_GAP + 3 * DESC_SCALE_Y + VERTICAL_SPOUSE_GAP / 2,
+	            stroke: col,
+	            'stroke-width': 2
+	        }));
+	    for (let gen = 1; gen <= maxA; gen++) {
+	
+	        // Ascendants
+	        const yA = (maxA - gen) * ASC_SCALE_Y - VERTICAL_CHILDREN_GAP / 2;
+	        appendTick(yA);
+	        appendLegendText(yA + BOX_H / 2 + VERTICAL_CHILDREN_GAP / 2 + fontSz / 2, `G${gen} - Ascendance`);
+	    }
+	    
+	    // Ligne basse G1
+	    appendTick(middle - VERTICAL_CHILDREN_GAP / 2);
+	    	
+	    // Génération G0
+	    const yD = middle + DESC_ASC_GAP - VERTICAL_CHILDREN_GAP / 2;
+	    appendTick(yD);
+	    appendLegendText(yD + (VERTICAL_CHILDREN_GAP / 2 + BOX_H + VERTICAL_SPOUSE_GAP / 2) / 2 + fontSz / 2, `G0`);
+	    	
+	    // conjoints G0
+	    const yDc = yD + BOX_H + VERTICAL_SPOUSE_GAP / 2 + VERTICAL_CHILDREN_GAP / 2;
+	    appendTick(yDc);
+	    appendLegendText(yDc + (VERTICAL_CHILDREN_GAP / 2 + BOX_H + VERTICAL_SPOUSE_GAP / 2) / 2 + fontSz / 2, `G0 - Conjoints`);
+	    	
+	    // 2) Descendance
+	    for (let gen = 2; gen <= maxD + 1; gen++) {
+	        
+	        // Descendants
+	        const yD = middle + DESC_ASC_GAP + (gen - 1) * DESC_SCALE_Y - VERTICAL_CHILDREN_GAP / 2;
+	        appendTick(yD);
+	    	appendLegendText(yD + (VERTICAL_CHILDREN_GAP / 2 + BOX_H + VERTICAL_SPOUSE_GAP / 2) / 2 + fontSz / 2, `G${gen - 1} - Descendance`);
+	    	
+	        // Conjoints 
+	        const yDc = yD + BOX_H + VERTICAL_CHILDREN_GAP / 2 + VERTICAL_SPOUSE_GAP / 2;
+				appendTick(yDc);
+			if (gen <= maxD) {
+				appendLegendText(yDc + (VERTICAL_CHILDREN_GAP / 2 + BOX_H + VERTICAL_SPOUSE_GAP / 2) / 2 + fontSz / 2, `G${gen - 1} - Conjoints`);
+			}
+		}
+	    // Ligne basse
+	    //appendTick(height);
+	}
+	
+	// --- Partie Descendance ---
+	function buildFamilyTree(person, generation, maxGen) {
+	    if (!person || generation > maxGen)
+	        return null;
+	    const families = (person.fams || []).map(fid => {
+	        const f = famMap[fid];
+	        if (!f)
+	            return null;
+	        const partnerId = f.husb === person.id ? f.wife : f.husb;
+	        const partner = partnerId ? indiMap[partnerId] : null;
+	        const children = f.children.map(cid => buildFamilyTree(indiMap[cid], generation + 1, maxGen)).filter(Boolean);
+	        return {
+	            partner,
+	            children,
+	            x: 0,
+	            width: 1
+	        };
+	    }).filter(Boolean);
+	    return {
+	        person,
+	        families,
+	        x: 0,
+	        y: generation,
+	        width: 1
+	    };
+	}
+	function assignPositions(node, xOffset = 0) {
+	    let x = xOffset;
+	    node.families.forEach(fam => {
+	        if (fam.children.length) {
+	            x = assignPositionsFamily(fam, x);
+	            x += INTERFAMILIAL_GAP;
+	        } else {
+	            fam.x = x;
+	            x += 1 + INTERFAMILIAL_GAP;
+	        }
+	    });
+	    if (node.families.length) {
+	        node.x = (node.families[0].x + node.families.slice(-1)[0].x) / 2;
+	        node.width = node.families.reduce((sum, f) => sum + f.width, 0);
+	    } else {
+	        node.x = x;
+	        node.width = 1;
+	        x += 1 + INTERFAMILIAL_GAP;
+	    }
+	    return x;
+	}
+	function assignPositionsFamily(fam, xOffset) {
+	    let x = xOffset;
+	    fam.children.forEach(child => {
+	        x = assignPositions(child, x);
+	    });
+	    if (fam.children.length) {
+	        fam.x = (fam.children[0].x + fam.children.slice(-1)[0].x) / 2;
+	        fam.width = fam.children.reduce((sum, c) => sum + c.width, 0);
+	    } else {
+	        fam.x = x + 0.5;
+	        fam.width = 1;
+	        x += 1;
+	    }
+	    return x;
+	}
+	function renderDesc(node, svg) {
+	    if (!node)
+	        return;
+	    const col = document.getElementById('descColor').value;
+	    // 1) personne
+	    renderPerson(node.person, node.x * SCALE_X, node.y * DESC_SCALE_Y, svg);
+	    // Ligne verticale du dessus systématique
+	    svg.appendChild(createSVG('line', {
+	            x1: node.x * SCALE_X + HALF_W,
+	            y1: node.y * DESC_SCALE_Y,
+	            x2: node.x * SCALE_X + HALF_W,
+	            y2: node.y * DESC_SCALE_Y - VERTICAL_CHILDREN_GAP / 2,
+	            stroke: col,
+	            'stroke-width': 2
+	        }));
+	    // 2) conjoints
+	    const spouses = node.families.filter(fam => fam.partner);
+	    const py = node.y * DESC_SCALE_Y + BOX_H;
+	    if (spouses.length === 1) {
+	        const fam = spouses[0];
+	        const sx = fam.x * SCALE_X + HALF_W;
+	        const sy = py + VERTICAL_SPOUSE_GAP;
+	        renderPerson(fam.partner, fam.x * SCALE_X, sy, svg);
+	        // ligne verticale vers conjoint
+	        svg.appendChild(createSVG('line', {
+	                x1: sx,
+	                y1: py,
+	                x2: sx,
+	                y2: sy,
+	                stroke: col,
+	                'stroke-width': 2
+	            }));
+	    } else if (spouses.length === 2) {
+	        const fam1 = spouses[0],
+	        fam2 = spouses[1];
+	        const sy = py + VERTICAL_SPOUSE_GAP;
+	        const sx1 = fam1.x * SCALE_X + HALF_W;
+	        const sx2 = fam2.x * SCALE_X + HALF_W;
+	        // affiche conjoint·e·s
+	        renderPerson(fam1.partner, fam1.x * SCALE_X, sy, svg);
+	        renderPerson(fam2.partner, fam2.x * SCALE_X, sy, svg);
+	        // lignes en L depuis côté gauche du conjoint
+	        const ix1 = node.x * SCALE_X;
+	        svg.appendChild(createSVG('line', {
+	                x1: ix1,
+	                y1: py - VERTICAL_SPOUSE_GAP,
+	                x2: sx1,
+	                y2: py - VERTICAL_SPOUSE_GAP,
+	                stroke: col,
+	                'stroke-width': 2
+	            }));
+	        svg.appendChild(createSVG('line', {
+	                x1: sx1,
+	                y1: py - VERTICAL_SPOUSE_GAP,
+	                x2: sx1,
+	                y2: sy,
+	                stroke: col,
+	                'stroke-width': 2
+	            }));
+	        // lignes en L depuis côté droit du conjoint
+	        const ix2 = node.x * SCALE_X + BOX_W;
+	        svg.appendChild(createSVG('line', {
+	                x1: ix2,
+	                y1: py - VERTICAL_SPOUSE_GAP,
+	                x2: sx2,
+	                y2: py - VERTICAL_SPOUSE_GAP,
+	                stroke: col,
+	                'stroke-width': 2
+	            }));
+	        svg.appendChild(createSVG('line', {
+	                x1: sx2,
+	                y1: py - VERTICAL_SPOUSE_GAP,
+	                x2: sx2,
+	                y2: sy,
+	                stroke: col,
+	                'stroke-width': 2
+	            }));
+	    }
+	    // 3) enfants
+	    node.families.forEach(fam => {
+	        if (!fam.children.length)
+	            return;
+	        const baseX = fam.partner
+	             ? fam.x * SCALE_X + HALF_W
+	             : node.x * SCALE_X + HALF_W;
+	        const startY = node.y * DESC_SCALE_Y + 2 * BOX_H + (fam.partner ? VERTICAL_SPOUSE_GAP : 0);
+	        const midY = startY + VERTICAL_CHILDREN_GAP / 2;
+	        // Ligne verticale vers les enfants
+	        svg.appendChild(createSVG('line', {
+	                x1: baseX,
+	                y1: startY,
+	                x2: baseX,
+	                y2: midY,
+	                stroke: col,
+	                'stroke-width': 2
+	            }));
+	        // Ligne horizontale pour relier les enfants
+	        if (fam.children.length > 1) {
+	            const x1 = fam.children[0].x * SCALE_X + HALF_W;
+	            const x2 = fam.children[fam.children.length - 1].x * SCALE_X + HALF_W;
+	            svg.appendChild(createSVG('line', {
+	                    x1: x1,
+	                    y1: midY,
+	                    x2: x2,
+	                    y2: midY,
+	                    stroke: col,
+	                    'stroke-width': 2
+	                }));
+	        }
+	        // to children
+	        fam.children.forEach(c => {
+	            renderDesc(c, svg);
+	        });
+	    });
+	}
+	
+	function ensureClipPath(svg) {
+	  if (svg.querySelector('#imgRoundClip')) return;
+	  const defs = createSVG('defs', {});
+	  const clip = createSVG('clipPath', { id: 'imgRoundClip' });
+	  // Rectangle aux mêmes dimensions/position que ton image
+	  clip.appendChild(createSVG('rect', {
+		x: 10, y: 10,
+		width: 120, height: 120,
+		rx: 8, ry: 8
+	  }));
+	  defs.appendChild(clip);
+	  svg.insertBefore(defs, svg.firstChild);
+	}
+	
+	function renderPerson(p, x, y, svg) {
+	    
+		const g = createSVG('g', {
+	        class: 'person',
+	        transform: `translate(${x},${y})`
+	    });
+		ensureClipPath(g);
+	    g.appendChild(createSVG('rect', {
+	            width: BOX_W,
+	            height: BOX_H,
+	            rx: 8,
+	            ry: 8,
+	            fill: '#f8f8f8',
+	            stroke: '#aaa'
+	        }));
+	    // Image
+	    const id = p.id.replace(/@/g, '');
+		const defaultImg = p.sex === 'F' ? 'photos/default_woman.png' : 'photos/default_man.png';
+
+		function createFallbackImage(imgSrcs, index = 0) {
+			const img = createSVG('image', {
+				href: imgSrcs[index],
+				x: 10,
+				y: 10,
+				width: 120,
+				height: 120,
+				preserveAspectRatio: 'xMidYMid slice',
+				'clip-path': 'url(#imgRoundClip)'
+			});
+			//img.setAttribute('clip-path', 'url(#imgRoundClip)');
+			img.onerror = () => {
+				if (index + 1 < imgSrcs.length) {
+					const newImg = createFallbackImage(imgSrcs, index + 1);
+					img.parentNode.replaceChild(newImg, img);
+				}
+			};
+			return img;
+		}
+
+		const imgSrcs = [
+			`photos/${id}.png`,
+			`photos/${id}.jpg`,
+			defaultImg
+		];
+		g.appendChild(createFallbackImage(imgSrcs));
+
+	    const textEl = createSVG('text', {
+	        x: HALF_W,
+	        y: 150,
+	        'text-anchor': 'middle',
+	        'font-size': 12
+	    });
+	    formatName(p).split(' ').forEach((ln, i) => {
+	        const t = createSVG('tspan', {
+	            x: HALF_W,
+	            dy: i === 0 ? 0 : '1.2em',
+	            'font-weight': 'bold'
+	        });
+	        t.textContent = ln;
+	        textEl.appendChild(t);
+	    });
+	    let dyOff = Math.max(1,formatName(p).split(' ').length-1);
+	    if (p.birth) {
+	        const b = createSVG('tspan', {
+	            x: HALF_W,
+	            dy: `${1.2 * dyOff}em`
+	        });
+	        b.textContent = p.birth;
+	        textEl.appendChild(b);
+	        dyOff++;
+	    }
+	    if (p.death) {
+	        const d = createSVG('tspan', {
+	            x: HALF_W,
+	            dy: '1.2em'
+	        });
+	        d.textContent = p.death;
+	        textEl.appendChild(d);
+	    }
+	    g.appendChild(textEl);
+	    svg.appendChild(g);
+	}
+	
+	// Zoom & Pan
+	function zoom(f) {
+	    let [x, y, w, h] = currentViewBox;
+	    const nw = w * f,
+	    nh = h * f;
+	    x += (w - nw) / 2;
+	    y += (h - nh) / 2;
+	    currentViewBox = [x, y, nw, nh];
+	    document.getElementById('tree').setAttribute('viewBox', currentViewBox.join(' '));
+	}
+	function zoomIn() {
+	    zoom(0.8);
+	}
+	function zoomOut() {
+	    zoom(1.25);
+	}
+	function resetZoom() {
+	    currentViewBox = [...initialViewBox];
+	    document.getElementById('tree').setAttribute('viewBox', currentViewBox.join(' '));
+	}
+	
+	function reloadTree() {
+	    const scaleDisplay = document.getElementById('scaleDisplay').checked;
+	    const maxA = +document.getElementById('maxAsc').value;
+	    const maxD = +document.getElementById('maxDesc').value;
+	    const root = indiMap[document.getElementById('rootSelect').value];
+	    const svg = document.getElementById('tree');
+	    
+	    if (!root)
+	        return;
+	    
+		let defs = svg.querySelector('defs');
+		if (!defs) {
+			defs = createSVG('defs');
+			svg.appendChild(defs);
+		}
+		const clip = createSVG('clipPath', { id: 'imgRoundClip' });
+		const r = createSVG('rect', {
+			x: 10,
+			y: 10,
+			width: 120,
+			height: 120,
+			rx: 8,
+			ry: 8
+		});
+		clip.appendChild(r);
+		defs.appendChild(clip);
+		
+		
+		
+		
+		// Ascendance
+	    const famA = famMap[root.famc[0]] || {};
+	    const asc = {
+	        gen: 0,
+	        x: 0,
+	        father: famA.husb ? buildAsc(indiMap[famA.husb], 1, maxA) : null,
+	        mother: famA.wife ? buildAsc(indiMap[famA.wife], 1, maxA) : null
+	    };
+	    assignAsc(asc);
+	    // Descendance: fratrie
+	    const famC = famMap[root.famc[0]] || {};
+	    const siblingIds = famC.children || [];
+	    const descRoots = siblingIds
+	        .map(id => buildFamilyTree(indiMap[id], 0, maxD))
+	        .filter(x => x);
+	    // positions horizontales (comme dans descendance_svg.html)
+	    let xOff = 0;
+	    descRoots.forEach(node => {
+	        xOff = assignPositions(node, xOff);
+	        xOff += INTERFAMILIAL_GAP;
+	    });
+	    // Dimensions
+	    const hA = maxA * ASC_SCALE_Y + OFFSET;
+	    const hD = (maxD + 1) * DESC_SCALE_Y + OFFSET;
+	    const H = hA + DESC_ASC_GAP + hD;
+	    const W = Math.max((asc.x + 1) * SCALE_X + OFFSET, xOff * SCALE_X + OFFSET);
+	    svg.innerHTML = '';
+	    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+	    svg.setAttribute('width', W);
+	    svg.setAttribute('height', H);
+	    const gA = createSVG('g', {
+	        transform: 'translate(0,0)'
+	    });
+	    const ascCenter = asc.x * SCALE_X + HALF_W;
+	    let descCenter = 0;
+	    const firstX = descRoots[0].x * SCALE_X + HALF_W;
+	    const lastX = descRoots[descRoots.length - 1].x * SCALE_X + HALF_W;
+	    descCenter = (firstX + lastX) / 2;
+	
+	    const dx = ascCenter - descCenter;
+	    
+	    const gD = createSVG('g', {
+	        transform: `translate(${dx},${hA + DESC_ASC_GAP})`
+	    });
+	    svg.appendChild(gA);
+	    svg.appendChild(gD);
+	
+	    // Dessiner l'ascendance
+	    renderAsc(asc, gA, maxA);
+	    // Dessiner la jonction centrale
+	    renderCenter(gA, ascCenter, firstX + dx, lastX + dx);
+	    // Dessiner la descendance
+	    descRoots.forEach(node => renderDesc(node, gD));
+	    
+	    const padding = 80;
+	    xOrigin = dx - padding;
+		realWidth = W;
+		const genScaleWidth = 200;
+		if (scaleDisplay) {
+		    xOrigin = xOrigin - genScaleWidth;
+		    realWidth = W + genScaleWidth+padding;
+		    // Dessiner l'échelle des générations
+		    renderGenScale(gA, xOrigin + padding, hA, H);
+	    }
+	    initialViewBox = [xOrigin, -padding, realWidth, H+2*padding];
+	    resetZoom();
+	}
+	
+	async function exportImage(format) {
+	
+	    const btn = document.getElementById('btn_' + format);
+	    const spinner = document.getElementById('spinner_' + format);
+	    // afficher spinner + désactiver bouton
+	    spinner.style.display = 'inline-block';
+	    const svgEl = document.getElementById('tree');
+	    const paper = document.getElementById('paperSize').value;
+	    const isLandscape = document.getElementById('landscapeCheckbox').checked;
+	
+	    const dpi = 100;
+	    const sizes = {
+	        A0: [841, 1189],
+	        A1: [594, 841],
+	        A2: [420, 594],
+	        A3: [297, 420],
+	        A4: [210, 297]
+	    };
+	    let [mmW, mmH] = sizes[paper];
+	    let pxW = Math.round(mmW / 25.4 * dpi),
+	    pxH = Math.round(mmH / 25.4 * dpi);
+	    if (isLandscape)
+	        [pxW, pxH] = [pxH, pxW];
+	
+	    try {
+	        btn.disabled = true;
+	
+	        // 1) SVG → téléchargement direct
+	        if (format === 'svg') {
+	            // clone le SVG pour ne pas toucher à l'affichage à l'écran
+	            const clone = svgEl.cloneNode(true);
+	            const imgs = clone.querySelectorAll('image');
+	            // remplace chaque <image href="…"> par un base64
+	            await Promise.all(Array.from(imgs).map(async img => {
+	                    const href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+	                    try {
+	                        const resp = await fetch(href);
+	                        const blob = await resp.blob();
+	                        const dataURL = await new Promise(r => {
+	                            const reader = new FileReader();
+	                            reader.onloadend = () => r(reader.result);
+	                            reader.readAsDataURL(blob);
+	                        });
+	                        img.setAttribute('href', dataURL);
+	                    } catch (e) {
+	                        console.warn('échec embed image', href, e);
+	                    }
+	                }));
+	
+	            // maintenant on sérialise le clone, avec les images inline
+	            const src = new XMLSerializer().serializeToString(clone);
+	            const blob = new Blob([src], {
+	                type: 'image/svg+xml;charset=utf-8'
+	            });
+	            const url = URL.createObjectURL(blob);
+	            const a = document.createElement('a');
+	            a.href = url;
+	            a.download = `Arbre.svg`;
+	            a.click();
+	            URL.revokeObjectURL(url);
+	            return;
+	        }
+	
+	        // 2) PDF → avec jsPDF + svg2pdf.js
+	        if (format === 'pdf') {
+	
+	            const {
+	                jsPDF
+	            } = window.jspdf;
+	            const pdf = new jsPDF({
+	                unit: 'mm',
+	                format: [mmW, mmH],
+	                orientation: isLandscape ? 'landscape' : 'portrait',
+					compress: true
+	            });
+	
+	            const vb = svgEl.viewBox.baseVal;
+	            const svgW = vb.width;
+	            const svgH = vb.height;
+	            // on scale pour la largeur page
+	            const pageW = pdf.internal.pageSize.getWidth();
+	            const pageH = pdf.internal.pageSize.getHeight();
+	            const scale = pageW / svgW;
+	
+	            const finalW = pageW;
+	            const finalH = svgH * scale;
+	            const xOffset = 0;
+	            const yOffset = (pageH - finalH) / 2;
+	            
+				await pdf.svg(svgEl, {
+	                x: xOffset, // position en mm
+	                y: yOffset,
+	                width: finalW, // largeur en mm
+	                height: finalH, // hauteur en mm
+					preserveAspectRatio: 'xMidYMid meet'
+	            });
+	
+	            pdf.save(`Arbre_${paper}${isLandscape ? '_PAYSAGE' : ''}.pdf`);
+	            return;
+	        }
+	        if (format === 'png') {
+	
+	            // --- embed des <image> ---
+	            const clone = svgEl.cloneNode(true);
+	            const imgs = clone.querySelectorAll('image');
+	            await Promise.all(Array.from(imgs).map(async img => {
+	                    const href = img.getAttribute('href')
+	                         || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+	                    try {
+	                        const resp = await fetch(href);
+	                        const blob = await resp.blob();
+	                        const dataURL = await new Promise(r => {
+	                            const reader = new FileReader();
+	                            reader.onloadend = () => r(reader.result);
+	                            reader.readAsDataURL(blob);
+	                        });
+	                        img.setAttribute('href', dataURL);
+	                    } catch (e) {}
+	                }));
+	            let source = new XMLSerializer().serializeToString(clone);
+	            if (!source.includes('xmlns="http://www.w3.org/2000/svg"'))
+	                source = source.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+	
+	            // --- dessin sur canvas ---
+	            await new Promise(resolve => {
+	                const img = new Image();
+	                img.onload = () => {
+	                    const srcW = img.naturalWidth,
+	                    srcH = img.naturalHeight;
+	                    const scale = Math.min(pxW / srcW, pxH / srcH);
+	                    const destW = srcW * scale,
+	                    destH = srcH * scale;
+	                    const dx = (pxW - destW) / 2,
+	                    dy = (pxH - destH) / 2;
+	                    const canvas = document.createElement('canvas');
+	                    canvas.width = pxW;
+	                    canvas.height = pxH;
+	                    const ctx = canvas.getContext('2d');
+	                    ctx.fillStyle = '#fff';
+	                    ctx.fillRect(0, 0, pxW, pxH);
+	                    ctx.drawImage(img, 0, 0, srcW, srcH, dx, dy, destW, destH);
+	                    const png = canvas.toDataURL('image/png');
+	                    const link = document.createElement('a');
+	                    link.download = `Arbre_${paper}${isLandscape ? '_PAYSAGE' : ''}.png`;
+	                    link.href = png;
+	                    link.click();
+	                    resolve();
+	                };
+	                img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(source);
+	            });
+	        }
+	    } finally {
+	        // cacher spinner + réactiver bouton
+	        spinner.style.display = 'none';
+	        btn.disabled = false;
+	    }
+	}
+	
+	window.onload = function () {
+	    fetch('arbre.ged').then(r => r.text()).then(parseGedcomText);
+	    const svg = document.getElementById('tree');
+	    let p = false,
+	    start,
+	    vb;
+	    svg.addEventListener('mousedown', e => {
+	        p = true;
+	        start = {
+	            x: e.clientX,
+	            y: e.clientY
+	        };
+	        vb = [...currentViewBox];
+	        svg.style.cursor = 'grabbing';
+	    });
+	    window.addEventListener('mousemove', e => {
+	        if (!p)
+	            return;
+	        const dx = (e.clientX - start.x) * (vb[2] / svg.clientWidth);
+	        const dy = (e.clientY - start.y) * (vb[3] / svg.clientHeight);
+	        currentViewBox = [vb[0] - dx, vb[1] - dy, vb[2], vb[3]];
+	        svg.setAttribute('viewBox', currentViewBox.join(' '));
+	    });
+	    window.addEventListener('mouseup', () => {
+	        p = false;
+	        svg.style.cursor = 'grab';
+	    });
+	    svg.addEventListener('wheel', e => {
+	        e.preventDefault();
+	        zoom(e.deltaY < 0 ? 0.9 : 1.1);
+	    });
+	};
+  </script>
+</body>
+</html>

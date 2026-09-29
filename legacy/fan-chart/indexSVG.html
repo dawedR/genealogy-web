@@ -1,0 +1,1627 @@
+<!DOCTYPE html>
+<meta charset='utf-8'>
+<script src="https://unpkg.com/parse-gedcom@1.0.5/dist/index.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/autosize.js/3.0.20/autosize.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/snap.svg/0.4.1/snap.svg-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/snap.svg.zpd/0.0.11/snap.svg.zpd.js"></script>
+<script src="https://cdn.rawgit.com/jshjohnson/Choices/2280371b/assets/scripts/dist/choices.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://unpkg.com/jspdf@latest/dist/jspdf.umd.min.js"></script>
+<script>
+  // expose le constructeur UMD en global
+  window.jsPDF = window.jspdf.jsPDF;
+</script>
+<script src="https://unpkg.com/jspdf@latest/dist/jspdf.plugin.svg.min.js"></script>
+<link rel="stylesheet" href="https://cdn.rawgit.com/jshjohnson/Choices/2280371b/assets/styles/css/choices.min.css">
+<style>
+  * {
+    box-sizing: border-box;
+  }
+   html, body {
+  margin: 0; padding: 0;
+  height: 100%;
+}
+body {
+  display: flex;              /* aside + preview côte à côte */
+}
+aside#controls {
+  width: 37em;                /* ta marge pour les contrôles */
+  overflow: auto;
+}
+main#preview {
+  flex: 1;                    /* prend tout l’espace à droite de l’aside */
+  display: flex;
+  justify-content: center;    /* centre horizontalement la page */
+  align-items: center;        /* centre verticalement la page */
+  background: white;
+  overflow: hidden;           /* pas de scroll ici */
+  height: 100vh;
+}
+#svg-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#svg-wrapper svg {
+  width: 100% !important;     /* le viewport SVG remplit intégralement #svg-wrapper */
+  height: 100% !important;
+  display: block;             /* élimine le petit décalage inline */
+  
+  /* c’est lui qui gère la mise à l’échelle *intelligente* 
+     pour que ton viewBox 297×210 tienne exactement dans cette fenêtre */
+  preserveAspectRatio: xMidYMid meet;
+}
+	main {
+	  position: relative;     /* pour que #svg-container se place par rapport à main */
+	  overflow: visible;      /* on vire son scroll interne */
+	  margin-left: 37em;      /* ton panneau de gauche */
+	  height: 100vh;
+	}
+  ul {
+    padding: 0;
+  }
+
+  
+
+  #title {
+    text-align: center;
+    font: 8px arial;
+    margin: .8em .8em .8em 12em;
+  }
+
+  .legend {
+    display: block;
+    position: absolute;
+    margin: 25em 0 0 10em;
+  }
+  
+  .legend header {
+    margin-left: 2.2em;
+    font-weight: bold;
+  }
+ 
+  .legend ul {
+    display: flex;	
+    flex-flow: column wrap;
+  }
+  .legend_label {
+    display: block;
+    position: relative;
+    min-width: 12em;
+    padding: 0 1em;
+  }
+  
+  .legend_label::before {
+    content: '';
+    padding: 0 1em;
+    margin-right: 1em;
+  }
+  .legend_label::after {
+    content: '';
+    opacity: .7;
+  }
+
+  aside {
+    position: fixed;
+    font: 300 12px/1.3 arial;
+    top: 0; bottom: 0;
+    overflow: auto;
+    width: 18em;
+    background-color: #fcfcfc;
+    border-right: 1px solid #ddd;
+    z-index: 1;
+  }
+  fieldset {
+    border: none;
+    margin: 1em 0;
+    padding: 0;
+  }
+  .fieldset_content {
+    padding: 0 10%;
+  }
+  legend {
+    font-size: .8em;
+    font-weight: bold;
+    width: 100%;
+    margin: 0 0 2em 0;
+    border: 1px solid #ddd;
+    border-width: 1px 0;
+    position: relative;
+    padding: 1em 10%;
+    background-color: #f5f5f5;
+  }
+  label{
+    padding: .5em 0;
+    font-size: .8em;
+    vertical-align: middle;
+  }
+  input,
+  textarea,
+  select {
+    width: 100%;
+    border: 1px solid #ddd;
+    padding: .25em;
+    vertical-align: middle;
+  }
+  textarea {
+    resize: none;
+    overflow: hidden;
+  }
+  input[type=checkbox] {
+    display: none;
+  }
+  input[type=checkbox] + label {
+    display: block;
+    margin-top: .75em;
+    padding: 0;
+  }
+  input[type=checkbox] + label:before{
+    content: '✓';
+    display: inline-block;
+    font-size: 2em;
+    line-height: .8em;
+    margin-right: .2em;
+    vertical-align: middle;
+    border: 1px solid #ddd;
+    background: white;
+    color: transparent;
+    transition: color .1s ease;
+  }
+  input[type=checkbox]:checked + label:before{
+    color: black;
+  }
+  input[type=button] {
+    margin-top: .75em;
+  }
+  .choices {
+    margin-bottom: .5em !important;
+    font-size: 1rem !important;
+  }
+  .choices__inner {
+    padding: 0 !important;
+    min-height: 0 !important;
+    font-size: 1em !important;
+  }
+  .choices__item {
+    padding: .5em !important;
+    font-size: 1em !important;
+    height: 1.8em !important;
+    overflow: hidden;
+  }
+  .choices__list--single {
+    padding: 0 16px 0 0 !important;
+  }
+  .choices__list--multiple .choices__item,
+  .choices__list--multiple .choices__item.is-highlighted {
+    padding: .3em .5em !important;
+    background-color: white;
+    border: 1px solid #dddddd;
+    border-radius: 3px;
+    color: black;
+  }
+  .empty-slice path {
+    fill: #f5f5f5;
+  }
+  .SEX_f path {
+    fill: #eee;
+  }
+  .SEX_m path {
+    fill: #ccc;
+  }
+
+  
+
+
+
+
+</style>
+
+<script type="application/json" id="dataStr"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script type="text/javascript">//<![CDATA[
+
+var uniqueCities = [];
+var data = {};
+let svg;
+
+
+window.onload=function(){
+
+	  // Tableau global pour accumuler les noms complets des villes
+var main = document.getElementById('main'),
+    chartStyle = document.getElementById('chartStyle'),
+    chartLegend = document.getElementById('chartLegend'),
+    chart, zpd;
+
+	// clear content on first load
+	const chartSvg = document.getElementById('chart');
+	chartSvg.innerHTML = '<g id="viewport"></g><g class="city-legend"></g>';
+  
+  // Taille interne du SVG
+  const svgWidth  = 297;
+  const svgHeight = 210;
+
+  // On récupère et on rend responsive
+  svg = d3.select('#chart')
+    .attr('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+	
+
+
+  const viewport = svg.select('#viewport');
+
+  // Calcul de la zone de tracé utile
+  const plotWidth  = svgWidth  - 60 * 2;
+  const plotHeight = svgHeight - 60 * 2;
+
+  // Échelles prêtes à l’emploi
+  const xScale = d3.scaleLinear().range([0, plotWidth]);
+  const yScale = d3.scaleLinear().range([plotHeight, 0]);
+
+  // Axes vides (sera mis à jour dans updateChart)
+  viewport.append('g')
+    .attr('class', 'x-axis')
+    .attr('transform', `translate(0, ${plotHeight})`);
+  viewport.append('g')
+    .attr('class', 'y-axis');
+
+  // Titre SVG
+  svg.append('text')
+  .attr('id', 'chart-title')
+  .attr('x', 170)           // mm
+  .attr('y', 8)            // mm
+  .attr('text-anchor', 'middle')
+  .attr('dominant-baseline', 'hanging')
+  .style('font-family', 'sans-serif')
+  .style('font-size', '4')  
+	.style('font-weight', 'bold')  
+
+  // Conteneur légende vide
+  svg.append('g')
+    .attr('class', 'city-legend');
+ 	
+	let populatedOrigin = document.querySelector('label[for=origin] + .choices');
+	if(populatedOrigin) populatedOrigin.outerHTML = '<select name="origin" id="origin"></select>';
+	let populatedPalette = document.querySelector('label[for=palette] + .choices');
+	if(populatedPalette) populatedPalette.outerHTML = '<select name="palette" id="palette"></select>';
+
+	/**
+	 * SETTINGS
+	 */
+	var settings = {
+		generations : document.getElementById('generations'),
+		origin : document.getElementById('origin'),
+		txtSpace : document.getElementById('txtSpace'),
+		genSpace : document.getElementById('genSpace'),
+		palettes : document.getElementById('palette'),
+		labelNbr : document.getElementById('labelNbr'),
+		globCols : document.getElementById('globCols'),
+		titleTpl : document.getElementById('titleTemplate'),
+		indivTpl : document.getElementById('indivTemplate'),
+		autosize : document.getElementById('autosize'),
+		highlights : document.getElementById('highlights'),
+		displayOrigin: document.getElementById('displayOrigin'),
+		uppercaseNames: document.getElementById('uppercaseNames'),
+		compPct: document.getElementById('compPct'),
+		showEmptySlices: document.getElementById('showEmptySlices')
+	};
+	window.fetchCoords = async function() {
+	  try {
+		const response = await fetch('city_coords.json');
+		if (!response.ok) throw new Error('Erreur de chargement');
+		return await response.json();
+	  } catch (error) {
+		console.error('Erreur lors du chargement des coordonnées des villes:', error);
+		return [];
+	  }
+	};
+	window.updateCityLegend = async function() {
+	  const legendG = svg.select('g.city-legend');
+	  const labelSize = 1;
+	  const max = Number(settings.labelNbr.value);
+	  if (max === 0) return;
+	  
+	  legendG
+	  .attr('transform', 'translate(10,40)')  // coin haut-gauche en (10 mm,35 mm)
+	  .selectAll('*').remove();
+	  
+	  legendG.	append('text')
+		.attr('class', 'legend-header')
+		.attr('x', 0)
+		.attr('y', 0)
+		.style('font-family', 'sans-serif')
+		.style('font-size', labelSize+'px')
+		.style('font-weight', 'bold')
+		.text('Ville de naissance (par distance à Lavigny) :');
+	  
+	  
+		// 1) Filtrer les individus actuellement affichés
+		  //    On prend data.ancestors, on retire les null, et si
+		  //    displayOrigin.checked == false, on enlève la souche (i=0).
+		  const displayedCount = Math.pow(2, settings.generations.value+1) -1 ;
+		const ancestors = data.ancestors.slice(0, displayedCount).filter((indiv, i) => {
+		  if (!indiv) return false;
+		  if (i === 0 && !settings.displayOrigin.checked) return false;
+		  return true;
+		});
+
+		  // 2) Compter les occurrences par ville (on garde que le nom avant la virgule)
+		  const counts = {};
+		  ancestors.forEach(indiv => {
+			const raw = (indiv.NLIEU || '').split(',')[0].trim();
+			if (!raw) return;
+			counts[raw] = (counts[raw] || 0) + 1;
+		  });
+	  const coords = await window.fetchCoords();
+	  const refCoord = coords[0]; // Coordonnées de Lavigny
+	  const refRegion = refCoord.city.split(',')[3].trim();
+	  const refPays = refCoord.city.split(',')[4].trim();
+	  
+	  // Obtenir les n villes les plus représentées
+	  const top = Object.entries(counts)
+		.map(([city, cnt]) => ({ city, cnt }))
+		.sort((a, b) => b.cnt - a.cnt)
+		.slice(0, max);
+
+	  // Calculer la distance de chaque ville par rapport à Lavigny
+	  const citiesWithDistance = top.map(({ city, cnt }) => {
+		const cityData = coords.find(c => c.city.split(',')[0].trim() === city);
+		const distance = cityData ? haversine(refCoord.lat, refCoord.lon, parseFloat(cityData.lat), parseFloat(cityData.lon)) : Infinity;
+		var cityLegend = city;
+		if (cityData) {
+			const cityRegion = cityData.city.split(',')[3].trim();
+			if (cityRegion !== refRegion) {
+				const cityPays = cityData.city.split(',')[4].trim();
+				if (cityPays !== refPays) 
+					cityLegend = city + ' (' + cityRegion + ', ' + cityPays + ')';
+				else 
+					cityLegend = city + ' (' + cityRegion + ')';
+			}
+		} 
+		return { city, cityLegend, cnt, distance };
+	  }).sort((a, b) => a.distance - b.distance);
+
+	  citiesWithDistance.forEach(({ city, cityLegend }, i) => {
+		const cls    = 'NVILLE' + cssnamify(city.split(' - ')[1] || city);
+		const pathEl = document.querySelector(`.slice.${cls} path`);
+		if (!pathEl) return;
+		const color  = getComputedStyle(pathEl).getPropertyValue('fill');
+
+		const y      = labelSize*1.8 + i * labelSize*1.8;             // espace entre chaque item
+		const itemG  = legendG.append('g')
+		  .attr('class', 'legend-item')
+		  .attr('transform', `translate(0,${y})`);
+
+		// petit carré coloré
+		itemG.append('rect')
+		  .attr('x', 0)
+		  .attr('y', -1*labelSize)      // pour centrer verticalement le texte
+		  .attr('width', labelSize)
+		  .attr('height', labelSize)
+		  .attr('fill', color);
+
+		// texte de légende
+		itemG.append('text')
+		  .attr('x', 2)
+		  .attr('y', -1)       // même repère vertical que le carré
+		  .style('font-family', 'sans-serif')
+		  .style('font-size', labelSize+'px')
+		  .style('font-weight', 'normal')
+		  .text(cityLegend);
+	  });
+	  	  
+	};
+
+	
+	
+	settings.origin.addEventListener('change', switchOrigin);
+	settings.labelNbr.addEventListener('change', () => {
+  updateCityLegend();
+  filterLabels();
+});settings.displayOrigin.addEventListener('change', updateChart);
+	settings.uppercaseNames.addEventListener('change', updateChart);
+	settings.compPct.addEventListener('change', updateChart);
+	settings.showEmptySlices.addEventListener('change', updateChart);
+	
+	
+	[].forEach.call(document.querySelectorAll('input.chartUpdate'), function(el) {
+	  el.addEventListener('change', updateChart);
+	});
+	[].forEach.call(document.querySelectorAll('input'), function(el) {
+	  el.addEventListener('change', function () {
+		updateTitle();
+		el.setAttribute('value', el.value);
+	  });
+	});
+
+	settings.titleTpl.addEventListener('input', function (el) {
+	  updateTitle();
+	  settings.titleTpl.innerHTML = settings.titleTpl.value;
+	});
+	settings.indivTpl.addEventListener('change', function (el) {
+	  updateIndivTexts();
+	  updateChart();
+	  settings.indivTpl.innerHTML = settings.indivTpl.value;
+	});
+
+autosize(document.getElementsByTagName('textarea'));
+
+// fit chart on print
+
+
+/**
+ * HELPERS
+ */
+function truncText ( str, n, useWordBoundary ){
+  var isTooLong = str.length > n,
+      s_ = isTooLong ? str.substr(0,n-1) : str;
+  s_ = (useWordBoundary && isTooLong) ? s_.substr(0,s_.lastIndexOf(' ')) : s_;
+  return  isTooLong ? s_ + '...' : s_;
+}
+function truncWords ( str, n, showFirstLetter, sep ){
+  var splitted = str.split(' '),
+      out = str;
+  if (splitted.length > n) {
+    out = splitted.slice(0, n).join(' ');
+    out += showFirstLetter ? ' ' + splitted[n].substring(0, 1) : '';
+    out += sep;
+  }
+  return out;
+}
+function truncByComma(str) {
+  return str.split(',')[0].trim();
+}
+function radians (degrees) {
+  return degrees * Math.PI / 180;
+}
+function setDefault (obj, def) {
+  for (var key in def) {
+    if(obj[key] === undefined)
+      obj[key] = def[key];
+  }
+  return obj;
+}
+
+
+
+
+
+/**
+ * MAIN
+ */
+originChoices = false;
+palettesChoices = false;
+highlightsChoices = false;
+
+var dataStr = document.getElementById('dataStr');
+retrieveContent();
+
+window.addEventListener('dragover',function(e){
+  e = e || event;
+  e.preventDefault();
+},false);
+window.addEventListener('drop', function(e) {
+  e = e || event;
+  e.stopPropagation();
+  e.preventDefault();
+  var f = e.dataTransfer.files[0],
+      reader = new FileReader();
+
+  reader.onload = parseFileContent;
+  reader.readAsText(f);
+}, false);
+
+function retrieveContent () {
+  if(!dataStr.innerText.length) return;
+  data = JSON.parse(dataStr.innerText);
+  registerIndivs();
+  registerOrigin();
+  updateTitle();
+  updateIndivTexts();
+  updateAncestors();
+  updateChart();
+}
+
+function parseFileContent (e) {
+  e = e.target.result.replace(/\r/g,'\r\n');
+  data.tree = parseGedcom.parse(e);
+  if(!data.tree.length) return;
+
+  data.tags = [];
+  data.indi = [];
+  data.sour = {};
+
+  data.tree.forEach(function (el) {
+    switch(el.tag) {
+      case 'INDI':
+        data.indi.push(el); break;
+      case 'SOUR':
+        data.sour[el.pointer] = getData(el, 'TITL').data;
+        break;
+      default: break;
+    }
+  });
+
+  data.indi.map(parseIndividual);
+
+  registerIndivs();
+  registerOrigin();
+  updateTitle();
+  updateIndivTexts();
+  updateAncestors();
+  updateChart();
+}
+
+function registerIndivs () {
+  var opt = [];
+  data.indi.forEach( function(indi, i) {
+    opt.push({value:i, label:indi.NOMF+' '+indi.PRNM});
+  });
+
+  if(originChoices) originChoices.destroy();
+
+  originChoices = new Choices(settings.origin, {
+    choices: opt,
+    shouldSort: false,
+    itemSelectText: ''
+  });
+}
+function registerOrigin () {
+  settings.origin.value = Math.min(data.indi.length-1, settings.origin.value);
+  data.origin = data.indi[settings.origin.value];
+}
+function switchOrigin () {
+  registerOrigin();
+  updateAncestors();
+  updateTitle();
+  updateChart();
+  
+}
+
+function updateChart() {
+
+  data.usedtags = {};
+
+  chart = drawChart(data.ancestors, {
+    fontSize: 7,
+    txtSpace: Number(settings.txtSpace.value),
+    genSpace: Number(settings.genSpace.value)
+  });
+  
+  applyCityColors();
+  updateCityLegend();
+  
+
+  document.body.classList.add('loaded');
+
+  dataStr.innerText = JSON.stringify(data);
+}
+
+
+
+
+function filterLabels() {
+  const max = Number(settings.labelNbr.value);
+  const lis = chartLegend.querySelectorAll('li');
+  lis.forEach((li, i) => {
+    // on affiche seulement les premiers max éléments
+    li.style.display = i < max ? 'flex' : 'none';
+  });
+}
+
+/**
+ * TREE PROCESSING
+ */
+function updateAncestors () {
+  data.ancestors = [data.origin];
+  var start, end, parents;
+  for (var cont = true, gen = 0; cont && gen <= 20; gen++)
+  {
+    start = Math.floor(Math.pow(2, gen-1));
+    end = Math.pow(2, gen);
+    cont = false;
+    for (var i = start; i < end; i++)
+    {
+      parents = getParents(data.ancestors[i]);
+      data.ancestors.push(parents[0] || null);
+      data.ancestors.push(parents[1] || null);
+      if(parents.length) cont = true;
+    }
+  }
+}
+function getParents (indiv)
+{
+  if(!indiv) return [];
+
+  // find family where indiv is child
+  var indivFamilyID = indiv.tree.find(function (el) {
+     return el.tag == 'FAMC';
+  });
+  if(indivFamilyID === undefined) return [];
+
+  var indivFamily = data.tree.find(function (el) {
+     return el.pointer == indivFamilyID.data;
+  });
+  if(indivFamily === undefined) return [];
+
+  // get parents IDs of that family
+  var parents = [];
+  var parentA = indivFamily.tree.find(function (el) {
+     return el.tag == 'HUSB';
+  });
+  var parentB = indivFamily.tree.find(function (el) {
+     return el.tag == 'WIFE';
+  });
+
+  // get parents
+  if(parentA !== undefined) {
+    parents.push(data.indi.find(function (el) {
+      return el.pointer == parentA.data;
+    }));
+  }
+  if(parentB !== undefined) {
+    parents.push(data.indi.find(function (el) {
+      return el.pointer == parentB.data;
+    }));
+  }
+
+  return parents;
+}
+
+function parseIndividual (indiv, id) {
+  indiv.id = id;
+  indiv.tags = [];
+  indiv.classes = [];
+  indiv.GID = indiv.pointer;
+  indiv.SQUA = 0;
+  var exclude = ['FAMC', 'EVEN', 'CHAN', 'BAPM', 'NOTE', 'BOJE'];
+  indiv.tree.forEach(function (event) {
+    if (~exclude.indexOf(event.tag)) return;
+    switch (event.tag) {
+      case 'NAME': registerName(indiv, event); break;
+      case 'SOUR': registerSource(indiv, event); break;
+      case 'BIRT': registerEvent(indiv, event, 'N'); break;
+      case 'DEAT': registerEvent(indiv, event, 'D'); break;
+      default: registerEvent(indiv, event); break;
+    }
+    if(event.tag !== 'BIRT') registerAge(indiv, event);
+  });
+  indiv.tags.forEach(function(tag){
+    registerTagClass(indiv, tag);
+  });
+  registerTagClass(indiv, 'SQUA', indiv.SQUA);
+  registerTagClass(indiv, 'NLIEU');
+  registerLifeArea(indiv);
+  
+  return indiv;
+}
+function updateIndivTexts () {
+  var notempty = function (el, i) {
+      return el.trim().length > 0;
+    },
+    lines = settings.indivTpl.value.split('\n').filter(notempty);
+
+  data.indi.forEach( function(el) {
+    el.texts = [];
+    for (var i = 0; i < lines.length; i++) {
+      el.texts.push(parseTextTemplate(lines[i], el));
+    }
+  });
+}
+function updateTitle () {
+  //document.getElementById('title').innerHTML = parseTextTemplate(settings.titleTpl.value, data.origin).join(' ');
+  const txt = parseTextTemplate(settings.titleTpl.value, data.origin).join(' ');
+  svg.select('#chart-title').text(txt);
+}
+function registerEvent (indiv, event, prefix) {
+  registerPlace(indiv, event);
+  registerPlace(indiv, event, prefix);
+  registerSource(indiv, event);
+  registerSource(indiv, event, prefix);
+  registerDate(indiv, event, prefix);
+
+  if(!prefix)
+    registerValue(indiv, event.tag, event.data, false);
+}
+function registerName(indiv, nameobj) {
+  // Récupérer le contenu de la balise NAME (ex. "Marie Virginie /Michaud/")
+  var fullName = nameobj.data;
+  var nomf = "";       // Pour NOMF : nom de famille (entre slashs)
+  var firstnamePart = "";  // Pour PRNS : partie avant les slashs (prénoms administratifs)
+  
+  // Extraire la partie entre slashs pour le nom de famille
+  var surnameMatch = fullName.match(/\/(.*?)\//);
+  if (surnameMatch) {
+    nomf = surnameMatch[1].trim();
+    // On retire la partie entre slashs pour obtenir la partie des prénoms
+    firstnamePart = fullName.replace(/\/.*?\//, "").trim();
+  } else {
+    // S'il n'y a pas de slash, toute la chaîne est considérée comme prénoms
+    firstnamePart = fullName.trim();
+  }
+  
+  // Pour PRNS : découper la partie donnée en tokens (séparés par espaces)
+  // et les joindre avec ", " pour obtenir par exemple "Marie, Virginie"
+  var firstnamesTokens = firstnamePart.split(/\s+/);
+  var prns = firstnamesTokens.join(', ');
+  
+  // Enregistrer NOMF et PRNS
+  registerValue(indiv, 'NOMF', nomf, false);
+  registerValue(indiv, 'PRNS', prns, false);
+  
+  // Déclaration de la variable pour récupérer GIVN (prénom d'usage tel que renseigné)
+  var prus = "";
+  if (nameobj.tree && nameobj.tree.length > 0) {
+    nameobj.tree.forEach(function(child) {
+      if (child.tag === 'GIVN') {
+        prus = child.data.trim();
+        registerValue(indiv, 'PRUS', prus, false);
+      }
+    });
+  }
+  
+  // Pour PRNM (prénom d'usage utilisé dans l'affichage) :
+  // Si prus (issu de GIVN) est non vide, on l'utilise, sinon on prend le premier token de PRNS.
+  var prnm = prus.length > 0 ? prus : (prns.split(", ")[0] || "");
+  registerValue(indiv, 'PRNM', prnm, false);
+}
+
+
+function registerDate (indiv, event, prefix) {
+  var datestr = getValue(event, 'DATE'),
+      date = parseDate(datestr);
+  if (isNaN(date) || date === '') return;
+  prefix = prefix ? prefix : '';
+  registerValue(indiv, prefix+'DATE', datestr, false);
+  if (datestr.match(/^\d\d? /)) // make sure there is really a day
+    registerValue(indiv, prefix+'JOUR', date.getDate());
+  if (datestr.match(/^\d+ \w+/)) // make sure il y a vraiment un mois
+    registerValue(indiv, prefix+'MOIS', date.getMonth()+1);
+  registerValue(indiv, prefix+'ANNEE', date.getFullYear());
+  registerValue(indiv, prefix+'PRE', date.prefix);
+  indiv[prefix+'DATEobj'] = date;
+  // decade & century
+  var year = date.getFullYear().toString();
+  registerValue(indiv, prefix+'DEC', year.slice(0,3)+'0');
+  registerValue(indiv, prefix+'SCL', year.slice(0,2)+'00');
+}
+function registerPlace(indiv, event, prefix) {
+  prefix = prefix || '';
+  var placesKeys = ['LIEUDIT','CODE','DEPT','REGION', 'PAYS'],
+      fullPlace = getValue(event, 'PLAC');
+  if(!fullPlace) return;
+  
+  // Enregistrer la valeur complète sous NLIEU (ou LIEU pour d'autres préfixes)
+  if (!indiv[prefix + 'LIEU']) {
+	registerValue(indiv, prefix + 'LIEU', fullPlace, false);
+	}
+ 
+  // On découpe pour enregistrer la ville (pour d'autres usages)
+  var parts = fullPlace.split(/,\s*/, 5);
+  if(prefix)
+    var lieudit = parts[0];
+    if (lieudit) {
+    	var ville = lieudit.split(" - ").pop();
+    	registerValue(indiv, prefix + 'VILLE', ville, false);
+    }
+  parts.forEach(function (el, i) {
+    // Si la valeur existe et qu'on a bien un index dans placesKeys
+    if (el !== undefined && placesKeys[i]) {
+      
+      if (placesKeys[i] !== 'CODE') {
+        registerValue(indiv, prefix + placesKeys[i], el.trim(), false);
+      }
+    }
+  });
+}
+function registerLifeArea (indiv) {
+  var lifeplaces;
+  ['LIEUDIT', 'CODE','DEPT','REGION','PAYS'].forEach(function (placekey) {
+      if(!indiv[placekey]) return;
+      var isMultiple = indiv[placekey].join && indiv[placekey].length > 1;
+      if(isMultiple || !lifeplaces)
+        lifeplaces = indiv[placekey];
+  });
+  if(lifeplaces)
+    registerValue(indiv, 'LIEUDIT', lifeplaces, false);
+}
+function registerAge (indiv, event) {
+  var datestr = getValue(event, 'DATE');
+  if (datestr === '' || !indiv.BDATEobj) return;
+  var date = parseDate(datestr);
+  if (date === '') return;
+  var agedate = new Date(date.getTime() - indiv.BDATEobj.getTime());
+  registerValue(indiv, 'AG'+event.tag, agedate.getUTCFullYear()-1970);
+}
+function registerSource (indiv, event, prefix) {
+  
+  prefix = prefix || '';
+  var source = event.tag === 'SOUR' ? event : getData(event, 'SOUR');
+  if (!source || !source.data) return;
+  prefix = prefix || '';
+  var squality = Number(getValue(source, 'QUAY'));
+  registerValue(indiv, prefix+'SGID', source.data);
+  registerValue(indiv, prefix+'SOUR', data.sour[source.data], false);
+  if (prefix)
+    registerValue(indiv, prefix+'SQUA', squality);
+  indiv.SQUA += squality;
+}
+function registerValue (indiv, tagname, value, splitstr) {
+  // Vérifier et initialiser indiv.tags si nécessaire
+  if (!indiv.tags) {
+    indiv.tags = [];
+  }
+  // Si la valeur est undefined ou null, la définir à une chaîne vide
+  if (value === undefined || value === null) {
+    value = '';
+  }
+  indiv.tags.push(tagname);
+
+  if(splitstr && typeof value.split === 'function')
+    value = value.split(splitstr || /[, ]+/g);
+  else if(!Array.isArray(value)) value = [value];
+
+  value.forEach(function(val){
+    if(!indiv[tagname]) {
+      indiv[tagname] = val;
+      return;
+    }
+    if(Array.isArray(indiv[tagname])) {
+      if(indiv[tagname].indexOf(val) === -1)
+        indiv[tagname].push(val);
+      return;
+    }
+    if(indiv[tagname] === val) return;
+    indiv[tagname] = [indiv[tagname], val];
+  });
+}
+function registerTagClass (indiv, tagname, nojoin) {
+
+  var cls,
+      val = indiv[tagname];
+
+  if (!val || (Array.isArray(val) && val.length === 0)) return;
+  
+  if(val.join) {
+    if(tagname == 'PRNS') {
+      val.forEach(function(v) {
+        if (!v) return;
+        cls = tagname + cssnamify(v);
+        indiv.classes.push(cls);
+        registerTag(tagname, v, cls);
+      });
+      return;
+    }
+    val = val.join(' / ');
+  }
+  cls = tagname + cssnamify(val);
+  indiv.classes.push(cls);
+  registerTag(tagname, val, cls);
+}
+function registerTag (tagname, val, cls) {
+  var item,
+      newitem = {val: val, cls: cls, nbr: 1},
+      tag = data.tags.find(function (el) {
+        return el.name == tagname;
+      });
+  if (!tag) {
+    data.tags.push({
+      name: tagname,
+      title: translateTagKey(tagname),
+      items: [newitem]
+    });
+    return;
+  }
+  item = tag.items.find(function (el) {
+    return el.cls == cls;
+  });
+  if (item) item.nbr++;
+  else tag.items.push(newitem);
+}
+function registerUsedTag (className) {
+  var split = className.split(/_/),
+      tag = split[0];
+  if(!data.usedtags[tag])
+    data.usedtags[tag] = [];
+  var existing = data.usedtags[tag].find(function (el) {
+        return el.name == className;
+      });
+  if (!existing) {
+    return data.usedtags[tag].push({name: className, nbr:1});
+  }
+  else existing.nbr++;
+}
+function translateTagKey(tag) {
+  // Si tag n'est pas une chaîne, le retourner tel quel
+  if (typeof tag !== 'string') return tag;
+  
+  var trans = {
+        noprefix: ['BURI','BAPL','BAPM','BARM','BASM','BLES','DATE','JOUR','SCL','DIV','DIF','DEPT','NOMF', 'DEC'],
+        evts: { N: 'Naissance %', D: 'Décès %', AG: '% (age)' },
+        tags: {
+          SEX: 'Genre', OCCU: 'Profession',
+          NOMF: 'Nom de famille', PRNM: 'Prénom', PRUS: 'Prénom d\'usage', PRNS: 'Prénoms (administratifs)',
+          DATE: 'Date', JOUR: 'Date: jour', MOIS: 'Date: mois', ANNEE: 'Date: année',
+          PRE: 'Date: type', DEC: 'Date: décénie', SCL: 'Date: siècle',
+          LIEU: 'Lieu', LIEUDIT: 'Lieu: lieu-dit', VILLE: 'Lieu: ville',
+          DEPT: 'Lieu: département', REGION: 'Lieu: région', PAYS: 'Lieu: pays', 
+          SOUR: 'Sources', SGID: 'Sources IDs', SQUA: 'Sources quality', NOTE: 'Note',
+          BURI: 'Burial', BAPM: 'Baptism',
+          IMMI: 'Immigration', NATU : 'Naturalisation', ADOP: 'Adoption',
+          CENS: 'Cencus', _MILT: 'Military',
+          RESI: 'Residence', PROP: 'Property',
+          FAMS: 'Famille (couple)',
+		  OBJE: 'Objet / média'		  
+        },
+        tagsprefixed: {
+          NAIS: 'naissance', DECES: 'décès',
+          DATE: 'date', JOUR: 'date: jour', MOIS: 'date: mois', ANNEE: 'date: année',
+          PRE: 'date: type', DEC: 'date: décénie', SCL: 'date: siècle',
+          LIEUDIT: 'Lieu: lieu-dit', VILLE: 'Lieu: ville',
+          DEPT: 'Lieu: département', REGION: 'Lieu: région', PAYS: 'Lieu: pays', 
+          SOUR: 'sources', SGID: 'sources ID', SQUA: 'sources quality',
+        }
+      };
+
+  // Utilisation d'une regex adaptée pour extraire le préfixe (N, D, AG) et la clé restante
+  var prefixMatch = tag.match(/^([ND]|AG)([A-Z]+)$/);
+  var noprefix = trans.noprefix.indexOf(tag) !== -1;
+  var prefix = noprefix ? null : prefixMatch;
+  var key = prefix ? prefix[2] : tag;
+  if (!trans.tags[key] && !trans.tagsprefixed[key]) return tag;
+  if (!prefix) return trans.tags[tag];
+  prefix = prefix[1];
+  return trans.evts[prefix].replace(/%/, trans.tagsprefixed[key] || trans.tags[key]);
+}
+
+function getData (node, tag) {
+  if(!node || !node.tree) return '';
+  return node.tree.find(function (el) {
+     return el.tag == tag;
+  });
+}
+function getValue (node, tag) {
+  var result = getData(node, tag);
+  if(result === undefined) return '';
+  return result.data;
+}
+
+
+function parseDate(inp) {
+  var date, str, prefix = '';
+  str = inp.trim()
+    .replace(/(?:FROM|BET)\s*/,'')
+    .replace(/\s*(?:TO|AND).+/,'');
+
+  if(!str.length)
+    return '';
+  str = str.split(/(ABT|CAL|EST|AFT|BEF)/);
+  if(str.length > 1) {
+    prefix = str[1].toLowerCase() + '.';
+    str = str[2];
+  } else str = str[0];
+  date = new Date(str);
+  date.prefix = prefix;
+  return date;
+}
+
+function parseTextTemplate (str, indiv) {
+  var keyreg = /([A-Z]{3,}(?:\.*\d+)?)/g;
+  return str.split(keyreg).map(function(key) {
+    // Si ce n'est pas une clé (texte normal), le retourner tel quel
+    if(!key.match(keyreg))
+      return key;
+
+    var truncnbr,
+        // Ici on récupère éventuellement des chiffres et des points
+        truncate = /([A-Z]{3,})(\.*)(\d+)/g.exec(key);
+    if(truncate !== null) {
+      key = truncate[1];
+      truncnbr = Number(truncate[3]);
+    }
+
+    if(key == 'GENS') return settings.generations.value.trim();
+
+    if(!indiv.hasOwnProperty(key))
+      return '';
+
+    var text;
+    if(Array.isArray(indiv[key]))
+      text = indiv[key].join(', ');
+    else 
+      text = indiv[key];
+
+    if(key === 'NOMF' && settings.uppercaseNames.checked) {
+      text = text.toUpperCase();
+    }
+    
+    if(truncate !== null) {
+      switch (truncate[2]) {
+        case '...': text = truncText(text, truncnbr, false); break;
+        case '..': text = truncWords(text, truncnbr, false, '...'); break;
+        case '.': text = truncWords(text, truncnbr, true, '.'); break;
+        default: text = truncWords(text, truncnbr, false, ''); break;
+      }
+    }
+    return ' ' + text;
+  });
+}
+
+/**
+ * CHART
+ */
+function maxTextsSizes (indivs, start, end, options) {
+  var maxLength = 0,
+      charWidth = options.fontSize * 0.4,
+      setMaxLength = function(el) {
+        var len = el.join(' ').length;
+        if (len > maxLength)
+          maxLength = len;
+      };
+  for (var i=start; i<end; i++) {
+    if(indivs[i] && indivs[i].texts)
+      indivs[i].texts.forEach(setMaxLength);
+  }
+  return {
+    width: maxLength * charWidth + options.txtSpace,
+    height: indivs[0].texts.length * options.fontHeight + options.txtSpace
+  };
+}
+function sliceMaxLines (texts, slice, options) {
+  var x = slice.arc1.a.x - slice.arc1.b.x,
+      y = slice.arc1.a.y - slice.arc1.b.y,
+      size = x*x + y*y,
+      lineh = options.fontHeight;
+  return Math.min(texts.length, Math.round(size / (lineh*lineh)));
+}
+function circlePathDef (x, y, r) {
+  var path = "M"+(x+r)+","+y;
+  path += " A"+r+","+r+" 0 0,0 "+(x-r)+","+y;
+  path += " A"+r+","+r+" 0 0,0 "+(x+r)+","+y;
+  return path;
+}
+function slicePathDef (coord, start, a, r, t) {
+  coord = coord || slicePathCoordinates(start, a, r, t);
+  var slicePath = "M"+coord.arc1.a.x+","+coord.arc1.a.y;
+  slicePath += " A"+coord.arc1.r+","+coord.arc1.r+" 0 0,1 "+coord.arc1.b.x+","+coord.arc1.b.y;
+  slicePath += " L"+coord.arc2.a.x+","+coord.arc2.a.y;
+  slicePath += " A"+coord.arc2.r+","+coord.arc2.r+" 0 0,0 "+coord.arc2.b.x+","+coord.arc2.b.y;
+  return slicePath + " Z";
+}
+function slicePathCoordinates (start, angle, r, t, reverse) {
+  var arc1 = arcCoordinates(start, angle, r, reverse),
+      arc2 = arcCoordinates(start+angle, -angle, r + t, reverse);
+  return reverse ? { arc1:arc2, arc2:arc1 } : {arc1:arc1, arc2:arc2};
+}
+function arcCoordinates (start, angle, r, reverse) {
+  if(reverse) {
+    start = start+angle;
+    angle *= -1;
+  }
+  return {
+    r : r,
+    a : {
+      x : Math.cos(start) * r,
+      y : Math.sin(start) * r
+    },
+    b : {
+      x : Math.cos(start+angle) * r,
+      y : Math.sin(start+angle) * r
+    }
+  };
+}
+function arcPath (start, angle, r, reverse) {
+  var c = arcCoordinates(start, angle, r, reverse),
+      arcdir = reverse ? '0,0' : '0,1';
+  return " M"+c.a.x+","+c.a.y + " A"+r+","+r+" 0 "+arcdir+" "+c.b.x+","+c.b.y;
+}
+
+function arcSegmentPathDef(x, y, r, startAngle, arcAngle) {
+  // Calculer le point de départ
+  var xStart = x + r * Math.cos(startAngle);
+  var yStart = y + r * Math.sin(startAngle);
+  // Calculer le point d'arrivée
+  var endAngle = startAngle + arcAngle;
+  var xEnd = x + r * Math.cos(endAngle);
+  var yEnd = y + r * Math.sin(endAngle);
+  // Retourner le chemin de l'arc
+  return "M" + xStart + "," + yStart +
+         " A" + r + "," + r + " 0 0,1 " + xEnd + "," + yEnd;
+}
+
+// Calcul des angles en fonction du taux de compression de l'éventail
+function fromCompressionPercent(pct) {
+  pct = Math.max(0, Math.min(100, pct));
+  const totalAngle = 2 * Math.PI - (Math.PI * (pct / 100));
+  const rotationOffset = 3*Math.PI / 2 - totalAngle / 2;
+  return { totalAngle, rotationOffset };
+}
+
+function drawChart (individuals, options) {
+
+  options = setDefault(options, {
+    genSpace: 1,
+    txtSpace: 10,
+    fontSize: 0.1,
+    lineHeight: 2,
+    minThickness: 40
+  });
+  options.fontHeight = options.fontSize + options.lineHeight;
+	
+	// Pourcentage de compression : 
+	// 0% = cercle complet
+	// 100% = graph réduit à un demi-cercle uniquement
+	var compPct = Number(document.getElementById('compPct').value);
+    
+    // Calcul des angles de l'éventail en fonciton du % de compression sélectionné.
+    // NB: en SVG, les angles sont processés dans le sens horaire à l'inverse de la trigonométrie standard
+    var angles = fromCompressionPercent(compPct);
+   
+    // rotationOffset = point de départ du graph qui sera dessiné dans le sens horaire
+	var rotationOffset = angles.rotationOffset;    
+    
+    // totalAngle = longueur de l'arc total de l'éventail
+	var totalAngle = angles.totalAngle;   
+	
+     var radius, thickness,
+      snap, view, fan, slice,
+      coord, slicePath,
+      lineCoord, linePath, lineNbr, spliceWidth,
+      textAttrs = {
+        fontSize: options.fontSize,
+        textAnchor: 'middle'
+      };
+
+  snap = Snap('#chart');
+  view = snap.select('#viewport');
+  fan = snap.select('#fan');
+
+  var addTextLine = function(text, index) {
+    if(index+1 > lineNbr) return;
+    textAttrs.dy = -1 + (index+1) * options.fontSize - lineNbr*(0.5*options.fontSize);
+    var txt = slice.text(0,0, text );
+    txt.attr(textAttrs);
+    if(!txt.textPath) return;
+    txt.textPath.attr({startOffset: '50%'});
+  };
+  var onSliceClick = function (e) {
+    console.log(e.currentTarget.indiv);
+  }
+  var onSliceDblClick = function (e) {
+    originChoices.setValueByChoice(e.currentTarget.indiv.id);
+    switchOrigin();
+  }
+
+  var gen, id, sliceID, indiv,
+      arcsNbr, arcAngle,
+      startAngle, middleAngle,
+      isHorizontal, isTopHalf, isLeftHalf,
+      reverse, maxTexts;
+
+	const CENTER_X    = 165;
+	const CENTER_Y    = 128;
+	const GLOBAL_SCALE = 0.12;
+  if (fan) fan.remove();
+	fan = view.g()
+  .attr('id', 'fan')
+  .attr('transform', `translate(${CENTER_X},${CENTER_Y}) scale(${GLOBAL_SCALE})`);
+
+  // origin
+  slice = fan.g();
+  maxTexts = maxTextsSizes(individuals, 0, 1, options);
+  radius = Math.max(Math.max(maxTexts.height, maxTexts.width)*.5, options.minThickness);
+  slice.circle(0, 0, radius).attr({ fill: "#fff" }); 
+  slice.addClass('slice GEN_0 '+ individuals[0].classes.join(' '));
+  individuals[0].classes.forEach(registerUsedTag);
+  lineNbr = individuals[0].texts.length;
+  if (settings.displayOrigin.checked) { 
+     individuals[0].texts.forEach(addTextLine);
+  }
+  radius+= options.genSpace;
+
+  // ancestors
+  for(gen = 1, id = 0; gen <= settings.generations.value; gen++) {
+  isHorizontal = gen < 4;
+  arcsNbr = Math.pow(2, gen);
+  arcAngle = totalAngle / arcsNbr;  
+  maxTexts = maxTextsSizes(individuals, id, id + arcsNbr, options);
+  thickness = isHorizontal ? Math.max(maxTexts.height, options.minThickness) : maxTexts.width;
+  
+  
+
+    for(sliceID = 0; sliceID < arcsNbr; sliceID++) {
+    id++;
+    indiv = individuals[id];
+	// Stocker la ville dans uniqueCities si c'est une nouvelle entrée
+	var lieu = (indiv && indiv.NLIEU ? indiv.NLIEU : "");
+	
+	  if (lieu && uniqueCities.indexOf(lieu) === -1) {
+		uniqueCities.push(lieu);
+	  }
+  
+    var showEmpty = document.getElementById('showEmptySlices').checked;
+	if (!indiv && !showEmpty) continue;
+
+    // Angle de départ de la slice en cours de création
+    startAngle = rotationOffset + arcAngle * sliceID;
+    // Angle médian de la slice en cours de création
+    middleAngle = startAngle + arcAngle * 0.5;
+    
+    // Est-on dans la moitié supérieure du cercle ? 
+    // Cet indicateur sert à inverser le texte pour plus de lisibilité.
+    // Si l'éventail est très compressé (quasi demi-cercle), on le laisse à true car l'inversion n'a pas vraiment de sens
+    // Sinon, on inverse entre Pi et 2 Pi
+    isTopHalf = compPct <= 50 || (middleAngle >= Math.PI && middleAngle <= Math.PI * 2);
+    
+    // Est-on dans la moitié gauche du cercle ? 
+    // Cet indicateur sert à définir le sens du texte (mirroir droite gauche)
+	// On est à gauche si l'angle médian de la slice est entre Pi/2 et 3*Pi/2 au sens SVG (lecture horaire), ie. entre Pi/2 et 3*Pi/2 au sens trigo du terme (lecture antihoraire)
+    isLeftHalf = middleAngle >= Math.PI/2 && middleAngle < Math.PI * 1.5;
+    reverse = (isHorizontal && isTopHalf) || (!isHorizontal && isLeftHalf);
+
+    // Tracer le segment d'arc pour la tranche
+    coord = slicePathCoordinates(startAngle, arcAngle, radius, thickness);
+    slice = fan.g();
+    slice.addClass('slice GEN_' + gen);
+    slice.path(slicePathDef(coord));
+
+		var thickWidth = 1; // Épaisseur pour séparer les couples
+		var thinWidth = 0.2;  // Épaisseur pour séparer les conjoints dans un couple
+		// Définir innerRadius et outerRadius pour la tranche en cours
+		var innerRadius = radius;             // rayon intérieur de la tranche
+		var outerRadius = radius + thickness;   // rayon extérieur de la tranche
+
+		// Calculer les points de la ligne sur le cercle
+		var x1 = Math.cos(startAngle) * innerRadius;
+		var y1 = Math.sin(startAngle) * innerRadius;
+		var x2 = Math.cos(startAngle) * outerRadius;
+		var y2 = Math.sin(startAngle) * outerRadius;
+		
+		// Déterminer l'épaisseur du trait en fonction de la séparation entre couples ou conjoints
+		// (Supposons que vous ayez déjà défini thinWidth et thickWidth)
+		var lineWidth = thickWidth; // par défaut, trait épais pour séparer deux couples
+		
+		if (sliceID > 0 && individuals[id] && individuals[id].FAMS && individuals[id - 1] && individuals[id - 1].FAMS) {
+		  if (individuals[id].FAMS === individuals[id-1].FAMS) {
+		    lineWidth = thinWidth; // même couple : trait plus fin
+		  }
+		}
+		
+		// Pour obtenir une épaisseur constante même lors du zoom, utilisez vector-effect
+		// Toutefois, pour mieux voir l'épaisseur, nous allons dessiner le trait comme un path (rectangle) plutôt que comme une simple ligne.
+		
+		// Calculer la direction perpendiculaire à la ligne (pour créer un rectangle d'épaisseur t)
+		var anglePerp = startAngle + Math.PI / 2;
+		var dx = Math.cos(anglePerp);
+		var dy = Math.sin(anglePerp);
+		
+		// t correspond à l'épaisseur du trait (lineWidth)
+		var t = lineWidth;
+		
+		// Calculer les quatre points du rectangle
+		var xA = x1 - dx * t/2;
+		var yA = y1 - dy * t/2;
+		var xB = x1 + dx * t/2;
+		var yB = y1 + dy * t/2;
+		var xC = x2 + dx * t/2;
+		var yC = y2 + dy * t/2;
+		var xD = x2 - dx * t/2;
+		var yD = y2 - dy * t/2;
+		
+		// Construire la chaîne de chemin (path)
+		var pathStr = "M" + xA + "," + yA + " L" + xB + "," + yB + " L" + xC + "," + yC + " L" + xD + "," + yD + " Z";
+		
+		// Dessiner le path avec les attributs souhaités
+		var dividingPath = fan.path(pathStr).attr({
+		  fill: "#fff",                  // Remplit en blanc
+		  vectorEffect: "non-scaling-stroke",  // Empêche le scaling du stroke
+		  stroke: "none"                 // Pas de contour additionnel
+	});
+
+
+      if(!indiv) {
+        slice.addClass('empty-slice');
+        const sexeClass = (sliceID % 2 === 0) ? 'SEX_m' : 'SEX_f';
+		slice.addClass(sexeClass);
+      } else {
+      	  slice.addClass(indiv.classes.join(' '));
+		  indiv.classes.forEach(registerUsedTag);
+	
+	      slice.node.indiv = indiv;
+	      slice.node.addEventListener('click', onSliceClick);
+	      slice.node.addEventListener('dblclick', onSliceDblClick);
+     
+	      // texts
+	      if (isHorizontal) {
+	        textAttrs.textpath  = arcPath(startAngle, arcAngle, radius + thickness * 0.5, !reverse);
+	      } else {
+	        lineCoord = slicePathCoordinates(middleAngle, 0, radius, thickness, reverse);
+	        textAttrs.textpath = "M"+lineCoord.arc1.a.x+","+lineCoord.arc1.a.y+" "+lineCoord.arc2.a.x+","+lineCoord.arc2.a.y;
+	      }
+	      lineNbr = isHorizontal ? indiv.texts.length : sliceMaxLines(indiv.texts, coord, options);
+		indiv.texts.forEach(addTextLine);
+      }
+    }
+    radius += thickness + options.genSpace;
+  }
+  return snap;
+}
+	// Tenter de charger le fichier GEDCOM par défaut
+	 fetch('arbre.ged')
+    .then(function(response) {
+      if (response.ok) {
+        return response.text();
+      } else {
+        throw new Error("Fichier par défaut non trouvé");
+      }
+    })
+    .then(function(text) {
+      // Simuler un événement de lecture de fichier
+      parseFileContent({ target: { result: text } });
+    })
+    
+};//]]>
+</script>
+
+<script>
+function saveChart () {
+  var html = document.children[0].outerHTML;
+  var el = document.createElement('a');
+  el.setAttribute('href', 'data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  el.setAttribute('download', 'fanchart.html');
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  el.click();
+  document.body.removeChild(el);
+}
+
+function exportSVG () {
+  var markup = getSVG();
+  var doc = new DOMParser().parseFromString(markup, "text/xml");
+  var svg = doc.children[0];
+  var defs = svg.children[0].children[2];
+
+  appendStyles(doc, defs);
+
+  saveFile(svg);
+}
+
+function getSVG() {
+  var svg = document.getElementById("chart");
+  svg.setAttribute('version', '1.1');
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  svg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+
+  var cls = document.getElementById("main").getAttribute('class');
+  if (cls) {
+    svg.setAttribute('class', cls);
+  }
+
+  return svg.outerHTML;
+}
+
+function exportCityList() {
+  const fileContent = uniqueCities.join("\n");
+  const blob = new Blob([fileContent], {type: "text/plain;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "city_list.txt";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+
+function appendStyles(doc, defs) {
+  var styles = document.getElementsByTagName("style");
+  for (var index = 0; index < styles.length; index++) {
+    var text = styles[index].innerHTML;
+
+    const style = doc.createElement("style");
+    style.setAttribute('type', 'text/css');
+    var cdata = doc.createCDATASection(text);
+    style.appendChild(cdata);
+    defs.appendChild(style);
+  }
+}
+
+function saveFile (svg) {
+  var markup = svg.outerHTML.replaceAll(' xmlns=""', '');
+  const blob = new Blob([markup]);
+  const element = document.createElement("a");
+  element.download = "fanchart.svg";
+  element.href = window.URL.createObjectURL(blob);
+  element.click();
+  element.remove();
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371, toRad = d => d * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon / 2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    function computeBearing(lat1, lon1, lat2, lon2) {
+      const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+      const dLon = toRad(lon2 - lon1);
+      const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+      const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+      return (toDeg(Math.atan2(y, x)) + 360) % 360;
+    }
+    function normalizeDistance(d) {
+      if (d < 10) return d/10*0.25;
+      if (d < 30) return 0.25 + (d-10)/20*0.25;
+      if (d < 150) return 0.5 + (d-30)/120*0.25;
+      return 0.75 + Math.min((d-150)/500, 0.25);
+    }
+    function computeColor(distance, dMin, dMax, bearing) {
+      const norm = normalizeDistance(distance);
+      let hueStart, hueRange;
+      if (norm < 0.25) { hueStart=90; hueRange=60; }
+      else if (norm < 0.5) { hueStart=150; hueRange=60; }
+      else if (norm < 0.75) { hueStart=210; hueRange=60; }
+      else { hueStart=270; hueRange=90; }
+      const localNorm = (norm % 0.25) / 0.25;
+      const hue = (hueStart + localNorm*hueRange) % 360;
+      const sat = 70 - norm*20;
+      const light = 42 + (bearing/360)*12;
+      return `hsl(${hue},${sat}%,${light}%)`;
+    }
+    function cssnamify(str) {
+	  if (Array.isArray(str)) {
+		str = str[0]; // on garde seulement le premier lieu
+	  }
+	  if (typeof str !== 'string') return '';
+	  return '_' + str.trim().toLowerCase().normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/[^a-z0-9]/g, s => s == ' ' ? '-' : '');
+	}
+    function applyCityColors() {
+      	 fetch('city_coords.json')
+        .then(r => r.json())
+        .then(coords => {
+          const refPlace = data.origin.NLIEU;
+          const refCoord = coords.find(c => c.city === refPlace);
+          if (!refCoord) return;
+          const dists = coords.map(c => haversine(refCoord.lat, refCoord.lon, c.lat, c.lon));
+          const dMin = Math.min(...dists), dMax = Math.max(...dists);
+          let styleContent = '';
+          coords.forEach(c => {
+            const d = haversine(refCoord.lat, refCoord.lon, c.lat, c.lon);
+            const b = computeBearing(refCoord.lat, refCoord.lon, c.lat, c.lon);
+            const color = computeColor(d, dMin, dMax, b);
+            const cls = 'NLIEU' + cssnamify(c.city);
+			styleContent += `.slice.${cls} path{fill:${color}}`;
+          });
+          let el = document.getElementById('cityColorStyle');
+          if (!el) {
+            el = document.createElement('style'); el.id = 'cityColorStyle'; document.head.appendChild(el);
+          }
+          el.innerText = styleContent;
+		  updateCityLegend();
+        });
+    }
+	
+	function exportPdf() {
+  // 1) Crée le PDF à partir de jsPDF
+  const pdf = new window.jsPDF({ unit:'mm', format:'a0', orientation:'landscape' });
+
+  // 2) Récupère et clone ton <svg>
+  const svgEl = document.querySelector('#svg-wrapper svg');
+  const clone = svgEl.cloneNode(true);
+
+  // 3) Injecte tes <style> dans le clone (pour que les CSS soient embarquées)
+  const xmlns = "http://www.w3.org/2000/svg";
+  let defs = clone.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS(xmlns, 'defs');
+    clone.insertBefore(defs, clone.firstChild);
+  }
+  document.querySelectorAll('style').forEach(style => {
+    defs.appendChild(style.cloneNode(true));
+  });
+
+  // 4) Appelle pdf.svg sur le clone, en lui passant les dimensions du PDF
+  const vb = clone.viewBox.baseVal;
+clone.setAttribute('width',  vb.width);
+clone.setAttribute('height', vb.height);
+clone.querySelectorAll('.slice path').forEach(path => {
+  path.setAttribute(
+    'fill',
+    getComputedStyle(path).getPropertyValue('fill')
+  );
+});pdf.svg(clone, {
+  x: 0, y: 0,
+  width:  pdf.internal.pageSize.getWidth(),
+  height: pdf.internal.pageSize.getHeight()
+}).then(() => pdf.save('fanchart_A0.pdf'));
+}
+
+</script>
+
+<body>
+<aside id="controls">
+  <fieldset>
+    <legend>Libellés</legend>
+    <div class="fieldset_content">
+      <label>Format de titre<textarea id="titleTemplate">Ascendance NOMF
+      (GENS générations)</textarea></label>
+      <label>Format de description des personnes<textarea id="indivTemplate">PRNM NOMF
+      NVILLE NANNEE - DANNEE
+      </textarea></label>
+      <input type="checkbox" id="uppercaseNames" checked>
+      <label for="uppercaseNames"><span class="check"></span>Afficher les noms de famille en majuscules</label>
+  </div>
+  </fieldset>
+  <fieldset>
+    <legend>Navigation</legend>
+    <div class="fieldset_content">
+      <label for="origin">Personne souche</label>
+      <select name="origin" id="origin"></select>
+      <input type="checkbox" id="displayOrigin">
+      <label for="displayOrigin"><span class="check"></span>Afficher le libellé de la souche</label>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Aspect</legend>
+    <div class="fieldset_content">
+      <label for="compPct">Compression de l'éventail (%)</label>
+		<select id="compPct" class="chartUpdate">
+		  <option value="0">0%</option>
+		  <option value="25">25%</option>
+		  <option value="50" selected>50%</option>
+		  <option value="75">75%</option>
+		  <option value="100">100%</option>
+		</select>
+	  <label>Nombre de générations<input type="number" id="generations" class="chartUpdate" min="1" value="8"></label>
+      <input type="checkbox" id="showEmptySlices" checked>
+	  <label for="showEmptySlices"><span class="check" class="chartUpdate"></span>Afficher les cases vides</label>
+	  <label>Espace entre générations<input type="number" id="genSpace" class="chartUpdate" min="0" max="20" step="1" value="1"></label>
+      <label>Marge<input type="number" id="txtSpace" class="chartUpdate" min="0" max="50" step="10" value="10"></label>
+      <input type="checkbox" name="autosize" id="autosize" checked>
+      <label for="autosize">Dimensionnement auto</label>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Légende</legend>
+    <div class="fieldset_content">
+      <label>Nombre d'éléments légendés<input type="number" id="labelNbr" min="0" value="80"></label>
+      <input type="checkbox" name="globCols" id="globCols" checked>
+   </div>
+  </fieldset>
+  <fieldset>
+    <legend>Enregistrer</legend>
+    <div class="fieldset_content">
+      <input id="download" type="button" value="Enregistrer" onClick="saveChart()">
+      <input id="exportCities" type="button" value="Exporter les villes" onClick="exportCityList()">
+	  <label for="pageFormat">Format PDF</label>
+		<select id="pageFormat">
+		  <option value="a4">A4</option>
+		  <option value="a3">A3</option>
+		  <option value="a2">A2</option>
+		  <option value="a1">A1</option>
+		  <option value="a0" selected>A0</option>
+		</select>
+	<input id="exportPdf" type="button" value="Exporter en PDF" onClick="exportPdf()">
+    </div>
+  </fieldset>
+</aside>
+<main id="preview">
+  <div id="svg-wrapper">
+    <svg
+        id="chart"
+        viewBox="0 0 297 210"
+        preserveAspectRatio="xMidYMid meet"
+      >
+  <text id="chart-title">
+  </text>
+  <g class="city-legend"></g>
+  <g id="viewport">
+    <g id="fan"></g>
+  </g>
+</svg>
+</div>
+</main>
+</body>

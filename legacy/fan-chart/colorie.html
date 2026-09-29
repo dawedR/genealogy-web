@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Villes colorées avec distance/hue et bearing/lightness</title>
+  <style>
+    .city-box {
+      padding: 10px;
+      margin: 5px;
+      color: white;
+      font-family: sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="cities-container"></div>
+  <script>
+    // Calcul de la distance en km (formule de Haversine)
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371; // rayon de la Terre
+      const toRad = angle => angle * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon/2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    // Calcul du bearing (cap) en degrés
+    function computeBearing(lat1, lon1, lat2, lon2) {
+      const toRad = angle => angle * Math.PI / 180;
+      const toDeg = angle => angle * 180 / Math.PI;
+      let dLon = toRad(lon2 - lon1);
+      let lat1Rad = toRad(lat1);
+      let lat2Rad = toRad(lat2);
+      let y = Math.sin(dLon) * Math.cos(lat2Rad);
+      let x = Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+              Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+      let bearing = Math.atan2(y, x);
+      bearing = toDeg(bearing);
+      return (bearing + 360) % 360;
+    }
+
+    // Attribution d'une couleur avec distance → teinte et bearing → luminosité
+function computeColor(distance, dMin, dMax, bearing) {
+  let normDist = (Math.sqrt(distance) - Math.sqrt(dMin)) / (Math.sqrt(dMax) - Math.sqrt(dMin));
+  let hue = 180 + normDist * 60; // tons froids
+  let normBearing = bearing / 360;
+  let lightness = 40 + normBearing * 20;
+  return `hsl(${hue}, 50%, ${lightness}%)`;
+}
+    // Chargement du fichier JSON
+    fetch('city_coords.json')
+      .then(response => response.json())
+      .then(villes => {
+        if (!Array.isArray(villes)) {
+          console.error("Le JSON doit contenir un tableau de villes.");
+          return;
+        }
+
+        // La ville de référence est la première (indice 0)
+        const ref = villes[0];
+        const refLat = parseFloat(ref.lat);
+        const refLon = parseFloat(ref.lon);
+
+        // Calcul de la distance et du bearing pour chaque ville
+        villes.forEach(ville => {
+          const lat = parseFloat(ville.lat);
+          const lon = parseFloat(ville.lon);
+          ville.distance = haversine(refLat, refLon, lat, lon);
+          ville.bearing = computeBearing(refLat, refLon, lat, lon);
+        });
+
+        // Récupération des distances min et max pour normaliser la teinte
+        const distances = villes.map(v => v.distance);
+        const dMin = Math.min(...distances);
+        const dMax = Math.max(...distances);
+
+        // Affichage des villes avec leur couleur calculée
+        const container = document.getElementById('cities-container');
+        villes.forEach(ville => {
+          const color = computeColor(ville.distance, dMin, dMax, ville.bearing);
+          const div = document.createElement('div');
+          div.className = 'city-box';
+          div.style.backgroundColor = color;
+          div.textContent = `${ville.city} (distance: ${ville.distance.toFixed(1)} km, cap: ${ville.bearing.toFixed(0)}°)`;
+          container.appendChild(div);
+        });
+      })
+      .catch(error => console.error('Erreur lors du chargement du JSON:', error));
+  </script>
+</body>
+</html>

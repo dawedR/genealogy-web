@@ -36,3 +36,6 @@ node_modules/
 
 # Donnees applicatives locales
 data/
+
+# Large legacy reference outputs
+legacy/reference-output/*.pdf

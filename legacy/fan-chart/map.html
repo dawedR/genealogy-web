@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Carte des origines - Incrustation corrigée</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; }
+    #headerBar {
+      height: 50px;
+      background: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border-bottom: 1px solid #ccc;
+    }
+    #headerBar button, #headerBar select {
+      padding: 6px 12px;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #mapContainer {
+      position: relative;
+      aspect-ratio: 297 / 210;
+      width: auto;
+      height: 100%;
+      background: white;
+    }
+    #mapMain, #mapInset {
+      position: absolute;
+      box-sizing: border-box;
+    }
+    #mapMain {
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: 1px solid black;
+    }
+    #mapInset {
+      bottom: 2%;
+      left: 2%;
+      width: 26%;
+      aspect-ratio: 1/1;
+      border: 2px solid black;
+      box-shadow: 0 0 8px rgba(0,0,0,0.6);
+      overflow: hidden;
+      background: white;
+    }
+    #contentWrapper {
+	  display: flex;
+	  height: calc(100vh - 50px);
+	  background: black;
+	}
+	#mapWrapper {
+	  flex: 1;
+	  display: flex;
+	  justify-content: center;
+	  align-items: center;
+	  background: black;
+	}
+	#mapInfos {
+	  width: 300px;
+	  padding: 10px;
+	  color: white;
+	  font-family: monospace;
+	  font-size: 14px;
+	  overflow-y: auto;
+	}
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="config/api_key.js"></script>
+</head>
+<body>
+<div id="headerBar">
+  <button onclick="capturePng()">Exporter en PNG</button>
+  <button onclick="capturePdf()">Exporter en PDF</button>
+  <select id="formatSelect">
+    <option value="a0">A0</option>
+    <option value="a1" selected>A1</option>
+    <option value="a2">A2</option>
+    <option value="a3">A3</option>
+  </select>
+  <button onclick="logMapsState()">Afficher paramètres cartes</button>
+</div>
+<div id="contentWrapper">
+  <div id="mapWrapper">
+    <div id="mapContainer">
+      <div id="mapMain"></div>
+      <div id="mapInset"></div>
+    </div>
+  </div>
+  <div id="mapInfos"></div>
+</div>
+<script>
+let googleMapsInstances = {};
+function haversine(lat1, lon1, lat2, lon2) { const R=6371,toRad=d=>d*Math.PI/180; const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1); const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2; return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
+function computeBearing(lat1, lon1, lat2, lon2) { const toRad=d=>d*Math.PI/180,toDeg=r=>r*180/Math.PI; const dLon=toRad(lon2-lon1),y=Math.sin(dLon)*Math.cos(toRad(lat2)),x=Math.cos(toRad(lat1))*Math.sin(toRad(lat2))-Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(dLon); return (toDeg(Math.atan2(y,x))+360)%360; }
+function normalizeDistance(distance) {
+  if (distance < 10) return distance / 10 * 0.25;        // 0–10 km -> 0–0.25
+  if (distance < 30) return 0.25 + (distance - 10) / 20 * 0.25; // 10–30 -> 0.25–0.5
+  if (distance < 150) return 0.5 + (distance - 30) / 120 * 0.25; // 30–150 -> 0.5–0.75
+  return 0.75 + Math.min((distance - 150) / 500, 0.25);   // >150 km -> 0.75–1
+}
+
+function computeColor(distance, dMin, dMax, bearing) {
+  const norm = normalizeDistance(distance);
+
+  let hueStart, hueRange;
+  
+  if (norm < 0.25) { // 0-10 km
+    hueStart = 90; hueRange = 60; // verts → jaunes
+  } else if (norm < 0.5) { // 10-30 km
+    hueStart = 150; hueRange = 60; // cyan → bleu
+  } else if (norm < 0.75) { // 30-150 km
+    hueStart = 210; hueRange = 60; // bleu → violet
+  } else { // >150 km
+    hueStart = 270; hueRange = 90; // violet → rose/rouge
+  }
+  
+  const localNorm = (norm % 0.25) / 0.25; // local dans chaque tranche
+  const hue = (hueStart + localNorm * hueRange) % 360;
+  
+  const sat = 70 - norm * 20; // saturation douce
+  const light = 42 + (bearing / 360) * 12; // petite variation lumineuse
+  
+  return `hsl(${hue},${sat}%,${light}%)`;
+}
+
+
+function initMaps(villes) {
+  const ref=villes[0], rLat=+ref.lat, rLon=+ref.lon;
+  const distances=villes.map(v=>haversine(rLat,rLon,+v.lat,+v.lon));
+  const dMin=Math.min(...distances), dMax=Math.max(...distances);
+  const zones=[
+    
+    { el:'mapInset', zoom:6, center:{lat:45.377280,lng:4.581630} },{ el:'mapMain', zoom:11.5, center:{lat:46.6091,lng:5.781939} }
+  ];
+  zones.forEach(z=>{
+    const commonOpts = {
+		center:z.center, zoom:z.zoom, disableDefaultUI:true
+	};
+	const styleMain = [
+	  {
+      featureType: 'administrative.locality',  // les villes
+      elementType: 'labels',                   // le texte des labels
+      stylers: [{ visibility: 'off' }]
+    }
+	];
+
+	const mapOpts = {
+	  ...commonOpts,
+	  ...(z.el === 'mapMain' ? { styles: styleMain } : {})
+	};
+		
+	const map=new google.maps.Map(document.getElementById(z.el),mapOpts);
+	googleMapsInstances[z.el] = map;
+	google.maps.event.addListenerOnce(mapMain, 'idle', () => {
+		const proj   = mapMain.getProjection();
+		const zoom   = mapMain.getZoom();
+		const scale  = Math.pow(2, zoom);
+		const kept   = []; // tableaux de bboxes déjà utilisées
+		villes.forEach(v => {
+		  const ll   = new google.maps.LatLng(+v.lat, +v.lon);
+		  const p    = proj.fromLatLngToPoint(ll);
+		  const x    = p.x * scale;
+		  const y    = p.y * scale;
+		  const txt  = v.city.split(',')[0].trim();
+		  const w    = txt.length * 6;  // approx largeur texte
+		  const h    = 10;              // hauteur fixe
+		  // bbox juste au-dessus du pin (36px)
+		  const box = { x1: x - w/2, y1: y - 36 - h, x2: x + w/2, y2: y - 36 };
+
+		  // test collision
+		  const clash = kept.some(b =>
+			!(b.x2 < box.x1 || b.x1 > box.x2 || b.y2 < box.y1 || b.y1 > box.y2)
+		  );
+		  if (!clash) {
+			new google.maps.Marker({
+			  position: ll,
+			  map: mapMain,
+			  optimized: false,
+			  label: {
+				text: txt,
+				fontSize: '8px',
+				color: '#000',
+				fontWeight: 'normal'
+			  }
+			});
+			kept.push(box);
+		  }
+		});
+	  });	
+    villes.forEach(v=>{
+      const lat=+v.lat, lon=+v.lon;
+      const d=haversine(rLat,rLon,lat,lon), b=computeBearing(rLat,rLon,lat,lon);
+      const color=computeColor(d,dMin,dMax,b);
+      const svgPin=`<svg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'><path d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z' fill='${color}' stroke='black' stroke-width='1'/><circle cx='12' cy='9' r='2' fill='white' /></svg>`;
+      const icon={ url:'data:image/svg+xml,'+encodeURIComponent(svgPin), scaledSize:new google.maps.Size(24,36), anchor:new google.maps.Point(12,36), labelOrigin: new google.maps.Point(12, 26) };
+      const markerOpts = {
+      position: { lat, lng: lon },
+      map,
+      icon,
+      optimized: false
+    };
+	
+
+    // Et on y greffe le label **seulement** pour mapMain
+    if (z.el === 'mapMain') {
+      markerOpts.label = {
+        text: v.city.split(',')[0].trim(),
+        color: '#000',       // noir, histoire d’être sûr
+        fontSize: '11px',
+        fontWeight: 'bold'
+      };
+    }
+	new google.maps.Marker(markerOpts);
+    });
+  });
+}
+
+function initMap(){ fetch('city_coords.json').then(r=>r.json()).then(v=>initMaps(v)); }
+(function(){ const s=document.createElement('script'); s.src=`https://maps.googleapis.com/maps/api/js?key=${API_KEY}&callback=initMap`; s.async=true; s.defer=true; document.head.appendChild(s); })();
+
+function capturePng(){
+  const format = document.getElementById('formatSelect').value;
+  const padding = 20; // marge blanche
+
+  html2canvas(document.getElementById('mapContainer'), {useCORS:true, scale: 4}).then(c => {
+    const canvas = document.createElement('canvas');
+    canvas.width = c.width + padding * 2;
+    canvas.height = c.height + padding * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(c, padding, padding);
+
+    const a = document.createElement('a');
+    a.download = 'multi_map_' + format + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  });
+}
+
+async function capturePdf() {
+  const format = document.getElementById('formatSelect').value;
+  const padding = 20; // marge blanche
+
+  const c = await html2canvas(document.getElementById('mapContainer'), {useCORS:true, scale: 6});
+  const canvas = document.createElement('canvas');
+  canvas.width = c.width + padding * 2;
+  canvas.height = c.height + padding * 2;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(c, padding, padding);
+
+  const img = canvas.toDataURL('image/png');
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: 'mm', format: format, orientation: 'landscape', compress:true });
+  const w = pdf.internal.pageSize.getWidth(), h = pdf.internal.pageSize.getHeight(), r = canvas.width / canvas.height;
+  let iw = w, ih = iw / r;
+  if (ih > h) { ih = h; iw = ih * r; }
+  const xo = (w - iw) / 2, yo = (h - ih) / 2;
+  pdf.addImage(img, 'PNG', xo, yo, iw, ih);
+  pdf.save('multi_map_' + format + '.pdf');
+}
+
+function logMapsState() {
+  const infos = ['<h3>Paramètres des cartes :</h3>'];
+  ['mapMain', 'mapInset'].forEach(id => {
+    const map = googleMapsInstances[id];
+    if (map) {
+      const center = map.getCenter();
+      infos.push(`<strong>${id}</strong> → Center: (${center.lat().toFixed(6)}, ${center.lng().toFixed(6)}), Zoom: ${map.getZoom()}`);
+    } else {
+      infos.push(`<strong>${id}</strong> → map non trouvée.`);
+    }
+  });
+  document.getElementById('mapInfos').innerHTML = infos.join('<br><br>');
+}
+</script>
+</body>
+</html>
