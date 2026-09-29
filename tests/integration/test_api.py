@@ -3,7 +3,7 @@ from urllib import response
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
-from src.domain.models import Family, Genealogy, Person, Sex
+from src.domain.models import Event, Family, Genealogy, Person, Place, Sex
 
 
 def make_genealogy() -> Genealogy:
@@ -59,6 +59,38 @@ def test_health():
         "persons_count": 3,
         "families_count": 1,
     }
+
+
+def test_get_places_inventory():
+    genealogy = make_genealogy()
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name="Écully, France"))
+    )
+    genealogy.persons["@I2@"].events.append(
+        Event(type="DEAT", place=Place(original_name="Lyon, France"))
+    )
+    genealogy.families["@F1@"].events.append(
+        Event(type="MARR", place=Place(original_name="Écully, France"))
+    )
+
+    with TestClient(create_app(genealogy)) as client:
+        response = client.get("/places")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "original_name": "Écully, France",
+            "occurrences_count": 2,
+            "persons_count": 2,
+            "event_counts": {"BIRT": 1, "MARR": 1},
+        },
+        {
+            "original_name": "Lyon, France",
+            "occurrences_count": 1,
+            "persons_count": 1,
+            "event_counts": {"DEAT": 1},
+        },
+    ]
 
 
 def test_search_people():
@@ -273,6 +305,8 @@ def test_index_page():
     assert 'id="search-form"' in response.text
     assert 'id="warnings-section"' in response.text
     assert 'id="ignored-tags-section"' in response.text
+    assert 'id="places-table"' in response.text
+    assert 'id="places-list"' in response.text
     assert 'id="fan-opening"' in response.text
     assert 'id="fan-chart"' in response.text
     assert 'id="fan-label-sosa"' in response.text
@@ -287,6 +321,8 @@ def test_static_javascript():
 
     assert response.status_code == 200
     assert "loadAncestry" in response.text
+    assert "loadPlaces" in response.text
+    assert "formatPlaceEventCounts" in response.text
     assert "renderImportDetails" in response.text
     assert "createFanGeometry" in response.text
     assert "setFanViewBox" in response.text

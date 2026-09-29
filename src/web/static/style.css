@@ -220,3 +220,24 @@ button {
 .fan-label-options label {
     white-space: nowrap;
 }
+.places-table-container {
+    overflow-x: auto;
+}
+
+#places-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#places-table th,
+#places-table td {
+    padding: 0.55rem;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid #ddd;
+}
+
+#places-table th:not(:first-child),
+#places-table td:not(:first-child) {
+    white-space: nowrap;
+}

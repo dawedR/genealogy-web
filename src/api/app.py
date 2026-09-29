@@ -23,6 +23,7 @@ from src.api.schemas import (
     IgnoredTagResponse,
     ImportReportResponse,
     PersonResponse,
+    PlaceInventoryResponse,
     SosaOccurrenceResponse,
 )
 from src.domain.models import Genealogy, ImportReport, Person
@@ -38,6 +39,7 @@ from src.services.search import (
     get_death_place,
 )
 
+from src.services.places import inventory_places
 from src.services.sosa import build_sosa_ancestry
 
 
@@ -138,6 +140,23 @@ def create_app(genealogy: Genealogy | None = None) -> FastAPI:
             filename=filename,
             report=report,
         )
+
+    @app.get(
+        "/places",
+        response_model=list[PlaceInventoryResponse],
+    )
+    def places_inventory(
+        request: Request,
+    ) -> list[PlaceInventoryResponse]:
+        return [
+            PlaceInventoryResponse(
+                original_name=entry.original_name,
+                occurrences_count=entry.occurrences_count,
+                persons_count=entry.persons_count,
+                event_counts=entry.event_counts,
+            )
+            for entry in inventory_places(_genealogy(request))
+        ]
 
     @app.get(
         "/people",

@@ -45,3 +45,9 @@ class SosaOccurrenceResponse(BaseModel):
     sosa: int
     generation: int
     person: PersonResponse | None
+
+class PlaceInventoryResponse(BaseModel):
+    original_name: str
+    occurrences_count: int
+    persons_count: int
+    event_counts: dict[str, int]

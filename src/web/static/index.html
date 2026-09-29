@@ -62,7 +62,29 @@
     </section>
 
     <section>
-        <h2>2. Choisir la personne souche</h2>
+        <h2>2. Lieux</h2>
+
+        <p id="places-status" class="status">
+            Importez un GEDCOM pour afficher les lieux.
+        </p>
+
+        <div class="places-table-container">
+            <table id="places-table" hidden>
+                <thead>
+                    <tr>
+                        <th scope="col">Lieu</th>
+                        <th scope="col">Occurrences</th>
+                        <th scope="col">Personnes</th>
+                        <th scope="col">Événements</th>
+                    </tr>
+                </thead>
+                <tbody id="places-list"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section>
+        <h2>3. Choisir la personne souche</h2>
 
         <form id="search-form">
             <input
@@ -79,7 +101,7 @@
     </section>
 
     <section>
-        <h2>3. Ascendance</h2>
+        <h2>4. Ascendance</h2>
 
         <label for="generations">
             Générations :
@@ -100,7 +122,7 @@
         <div id="ancestry"></div>
     </section>
     <section>
-        <h2>4. Éventail d'ascendance</h2>
+        <h2>5. Éventail d'ascendance</h2>
 
         <div class="fan-controls">
             <label for="fan-generations">

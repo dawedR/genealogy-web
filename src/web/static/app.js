@@ -3,6 +3,10 @@ const fileInput = document.querySelector("#gedcom-file");
 const importStatus = document.querySelector("#import-status");
 const importReport = document.querySelector("#import-report");
 
+const placesStatus = document.querySelector("#places-status");
+const placesTable = document.querySelector("#places-table");
+const placesList = document.querySelector("#places-list");
+
 const searchForm = document.querySelector("#search-form");
 const searchQuery = document.querySelector("#search-query");
 const searchResults = document.querySelector("#search-results");
@@ -136,6 +140,7 @@ importForm.addEventListener("submit", async (event) => {
             `Import réussi : ${data.filename}`;
         
         renderImportDetails(data);
+        loadPlaces();
 
         selectedPersonId = null;
         selectedPerson.textContent =
@@ -257,6 +262,63 @@ function renderSearchResults(people) {
     }
 
     searchResults.appendChild(list);
+}
+
+
+async function loadPlaces() {
+    placesStatus.textContent = "Chargement des lieux…";
+    placesTable.hidden = true;
+    placesList.innerHTML = "";
+
+    try {
+        const response = await fetch("/places");
+        const places = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                places.detail ||
+                "Impossible de charger les lieux"
+            );
+        }
+
+        if (places.length === 0) {
+            placesStatus.textContent =
+                "Aucun lieu associé à un événement.";
+            return;
+        }
+
+        for (const place of places) {
+            const row = document.createElement("tr");
+            const cells = [
+                place.original_name,
+                place.occurrences_count,
+                place.persons_count,
+                formatPlaceEventCounts(place.event_counts),
+            ];
+
+            for (const value of cells) {
+                const cell = document.createElement("td");
+                cell.textContent = value;
+                row.appendChild(cell);
+            }
+
+            placesList.appendChild(row);
+        }
+
+        placesTable.hidden = false;
+        placesStatus.textContent =
+            `${places.length} lieux utilisés dans les événements.`;
+
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
+}
+
+
+function formatPlaceEventCounts(eventCounts) {
+    return Object.entries(eventCounts)
+        .map(([type, count]) => `${type}: ${count}`)
+        .join(", ");
 }
 
 
