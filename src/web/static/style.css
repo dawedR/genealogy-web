@@ -203,6 +203,56 @@ button {
     font-weight: 600;
 }
 
+#fan-legend {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+#fan-legend h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+}
+
+#fan-legend-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.4rem 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.fan-legend-entry {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.fan-legend-swatch {
+    width: 1rem;
+    height: 1rem;
+    border: 1px solid #666;
+    border-radius: 2px;
+}
+
+.fan-legend-label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.fan-legend-status {
+    color: #666;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.fan-legend-count {
+    font-variant-numeric: tabular-nums;
+}
+
 .fan-label-options {
     display: flex;
     flex-wrap: wrap;

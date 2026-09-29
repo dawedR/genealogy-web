@@ -575,6 +575,8 @@ def test_index_page():
 
     assert 'id="fan-opening"' in response.text
     assert 'id="fan-chart"' in response.text
+    assert 'id="fan-legend"' in response.text
+    assert 'id="fan-legend-list"' in response.text
     assert 'id="fan-label-sosa"' in response.text
     assert 'id="fan-label-name"' in response.text
     assert 'id="fan-label-birth"' in response.text
@@ -605,6 +607,14 @@ def test_static_javascript():
     assert "buildSecondaryLabelLines" in response.text
     assert "abbreviatePersonName" in response.text
     assert "formatEventLabel" in response.text
+    assert "renderFanLegend" in response.text
+    assert "legendEntryForOccurrence" in response.text
+    assert "compareLegendEntries" in response.text
+    assert "${occurrence.color_kind}:${occurrence.birth_place_original_name}" in response.text
+    assert "Non vérifié" in response.text
+    assert "existing.occurrencesCount += 1" in response.text
+    assert "occurrence.person === null && !showUnknown" in response.text
+    assert "second.occurrencesCount - first.occurrencesCount" in response.text
 
 
 def test_static_javascript_loads_fan_chart_when_selecting_a_person():
@@ -995,6 +1005,7 @@ def test_sosa_birth_place_colors_are_computed_server_side():
     store.save(
         PlaceEnrichment(
             original_name="Validé",
+            normalized_name="Lieu validé",
             latitude=46.0,
             longitude=5.0,
             status=PlaceEnrichmentStatus.VALIDATED,
@@ -1017,15 +1028,27 @@ def test_sosa_birth_place_colors_are_computed_server_side():
 
     assert response.status_code == 200
     by_sosa = {item["sosa"]: item for item in response.json()}
+    assert by_sosa[1]["birth_place_original_name"] == "Racine"
+    assert by_sosa[1]["birth_place_display_name"] == "Racine"
     assert by_sosa[1]["color_kind"] == "GEOGRAPHIC"
     assert by_sosa[1]["color_css"] == "#B49CB1"
+    assert by_sosa[1]["color_reliable"] is True
+    assert by_sosa[2]["birth_place_original_name"] == "Validé"
+    assert by_sosa[2]["birth_place_display_name"] == "Lieu validé"
     assert by_sosa[2]["color_kind"] == "GEOGRAPHIC"
     assert by_sosa[2]["color_css"] != by_sosa[1]["color_css"]
+    assert by_sosa[2]["color_reliable"] is True
+    assert by_sosa[3]["birth_place_original_name"] == "Manuel"
+    assert by_sosa[3]["birth_place_display_name"] == "Manuel"
     assert by_sosa[3]["color_kind"] == "UNVERIFIED_PLACE"
     assert by_sosa[3]["color_css"] == "#D8D8D8"
+    assert by_sosa[3]["color_reliable"] is False
     for sosa in (4, 5, 6, 7):
+        assert by_sosa[sosa]["birth_place_original_name"] is None
+        assert by_sosa[sosa]["birth_place_display_name"] is None
         assert by_sosa[sosa]["color_kind"] == "UNKNOWN_BIRTH"
         assert by_sosa[sosa]["color_css"] == "#EFEFEF"
+        assert by_sosa[sosa]["color_reliable"] is False
 
 
 def test_sosa_birth_place_colors_require_a_validated_root_birth_place():
@@ -1056,5 +1079,150 @@ def test_sosa_none_color_mode_preserves_monochrome_response():
         )
 
     assert response.status_code == 200
+    assert all(item["birth_place_original_name"] is None for item in response.json())
+    assert all(item["birth_place_display_name"] is None for item in response.json())
     assert all(item["color_kind"] is None for item in response.json())
     assert all(item["color_css"] is None for item in response.json())
+    assert all(item["color_reliable"] is None for item in response.json())
+
+
+def test_sosa_geographic_fields_preserve_implex_occurrences():
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name="Racine"))],
+            ),
+            "@I2@": Person(
+                id="@I2@",
+                events=[Event(type="BIRT", place=Place(original_name="Parent A"))],
+            ),
+            "@I3@": Person(
+                id="@I3@",
+                events=[Event(type="BIRT", place=Place(original_name="Parent B"))],
+            ),
+            "@I4@": Person(
+                id="@I4@",
+                events=[Event(type="BIRT", place=Place(original_name="Partagé"))],
+            ),
+        },
+        families={
+            "@F1@": Family(
+                id="@F1@",
+                children=["@I1@"],
+                father_id="@I2@",
+                mother_id="@I3@",
+            ),
+            "@F2@": Family(
+                id="@F2@",
+                children=["@I2@"],
+                father_id="@I4@",
+            ),
+            "@F3@": Family(
+                id="@F3@",
+                children=["@I3@"],
+                father_id="@I4@",
+            ),
+        },
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    for original_name, latitude, longitude in (
+        ("Racine", 45.7484, 4.8256),
+        ("Parent A", 46.0, 5.0),
+        ("Parent B", 45.0, 4.0),
+        ("Partagé", 50.0, 20.0),
+    ):
+        store.save(
+            PlaceEnrichment(
+                original_name=original_name,
+                normalized_name=(
+                    "Lieu partagé" if original_name == "Partagé" else None
+                ),
+                latitude=latitude,
+                longitude=longitude,
+                status=PlaceEnrichmentStatus.VALIDATED,
+            )
+        )
+
+    with TestClient(create_app(genealogy, store)) as client:
+        response = client.get(
+            "/people/@I1@/sosa",
+            params={"generations": 2, "color_mode": "BIRTH_PLACE"},
+        )
+
+    assert response.status_code == 200
+    shared_occurrences = [
+        item
+        for item in response.json()
+        if item["birth_place_original_name"] == "Partagé"
+    ]
+    assert [item["sosa"] for item in shared_occurrences] == [4, 6]
+    assert {item["birth_place_display_name"] for item in shared_occurrences} == {
+        "Lieu partagé"
+    }
+    assert len({item["color_css"] for item in shared_occurrences}) == 1
+
+
+def test_sosa_geographic_fields_keep_unverified_places_separate():
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name="Racine"))],
+            ),
+            "@I2@": Person(
+                id="@I2@",
+                events=[Event(type="BIRT", place=Place(original_name="Non vérifié A"))],
+            ),
+            "@I3@": Person(
+                id="@I3@",
+                events=[Event(type="BIRT", place=Place(original_name="Non vérifié B"))],
+            ),
+        },
+        families={
+            "@F1@": Family(
+                id="@F1@",
+                children=["@I1@"],
+                father_id="@I2@",
+                mother_id="@I3@",
+            ),
+        },
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(
+        PlaceEnrichment(
+            original_name="Racine",
+            latitude=45.7484,
+            longitude=4.8256,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+    for original_name in ("Non vérifié A", "Non vérifié B"):
+        store.save(
+            PlaceEnrichment(
+                original_name=original_name,
+                normalized_name="Même libellé normalisé",
+                status=PlaceEnrichmentStatus.MANUAL,
+            )
+        )
+
+    with TestClient(create_app(genealogy, store)) as client:
+        response = client.get(
+            "/people/@I1@/sosa",
+            params={"generations": 1, "color_mode": "BIRTH_PLACE"},
+        )
+
+    assert response.status_code == 200
+    unverified = [
+        item
+        for item in response.json()
+        if item["color_kind"] == "UNVERIFIED_PLACE"
+    ]
+    assert [item["birth_place_original_name"] for item in unverified] == [
+        "Non vérifié A",
+        "Non vérifié B",
+    ]
+    assert {item["birth_place_display_name"] for item in unverified} == {
+        "Même libellé normalisé"
+    }
+    assert {item["color_css"] for item in unverified} == {"#D8D8D8"}

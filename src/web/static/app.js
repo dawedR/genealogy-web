@@ -90,6 +90,12 @@ const fanStatus =
 const fanChart =
     document.querySelector("#fan-chart");
 
+const fanLegend =
+    document.querySelector("#fan-legend");
+
+const fanLegendList =
+    document.querySelector("#fan-legend-list");
+
 const fanLabelSosa =
     document.querySelector("#fan-label-sosa");
 
@@ -772,6 +778,7 @@ async function loadFanChart(personId) {
     const generations = Number(fanGenerations.value);
 
     fanStatus.textContent = "Calcul de l'éventail…";
+    clearFanLegend();
 
     try {
         const response = await fetch(
@@ -792,6 +799,10 @@ async function loadFanChart(personId) {
         renderFanChart(
             occurrences,
             generations,
+            fanShowUnknown.checked,
+        );
+        renderFanLegend(
+            occurrences,
             fanShowUnknown.checked,
         );
 
@@ -850,6 +861,132 @@ function renderFanChart(
             );
         }
     }
+}
+
+
+function clearFanLegend() {
+    fanLegendList.innerHTML = "";
+    fanLegend.hidden = true;
+}
+
+
+function renderFanLegend(occurrences, showUnknown) {
+    clearFanLegend();
+
+    if (fanColorMode.value !== "BIRTH_PLACE") {
+        return;
+    }
+
+    const entries = new Map();
+
+    for (const occurrence of occurrences) {
+        if (occurrence.person === null && !showUnknown) {
+            continue;
+        }
+
+        const entry = legendEntryForOccurrence(occurrence);
+        if (entry === null) {
+            continue;
+        }
+
+        const existing = entries.get(entry.key);
+        if (existing !== undefined) {
+            existing.occurrencesCount += 1;
+        } else {
+            entries.set(entry.key, entry);
+        }
+    }
+
+    const orderedEntries = [...entries.values()].sort(compareLegendEntries);
+
+    for (const entry of orderedEntries) {
+        const item = document.createElement("li");
+        item.className = "fan-legend-entry";
+
+        const swatch = document.createElement("span");
+        swatch.className = "fan-legend-swatch";
+        swatch.style.backgroundColor = entry.colorCss;
+        swatch.setAttribute("aria-hidden", "true");
+
+        const label = document.createElement("span");
+        label.className = "fan-legend-label";
+        label.textContent = entry.label;
+
+        const status = document.createElement("span");
+        status.className = "fan-legend-status";
+        status.textContent = entry.statusLabel || "";
+
+        const count = document.createElement("span");
+        count.className = "fan-legend-count";
+        count.textContent = entry.occurrencesCount;
+
+        item.append(swatch, label, status, count);
+        fanLegendList.appendChild(item);
+    }
+
+    fanLegend.hidden = orderedEntries.length === 0;
+}
+
+
+function legendEntryForOccurrence(occurrence) {
+    if (
+        occurrence.color_kind === "GEOGRAPHIC" ||
+        occurrence.color_kind === "UNVERIFIED_PLACE"
+    ) {
+        if (
+            occurrence.birth_place_original_name === null ||
+            occurrence.birth_place_display_name === null
+        ) {
+            return null;
+        }
+
+        const isGeographic = occurrence.color_kind === "GEOGRAPHIC";
+
+        return {
+            key: `${occurrence.color_kind}:${occurrence.birth_place_original_name}`,
+            kind: occurrence.color_kind,
+            label: occurrence.birth_place_display_name,
+            statusLabel: isGeographic ? null : "Non vérifié",
+            colorCss: occurrence.color_css,
+            occurrencesCount: 1,
+        };
+    }
+
+    if (occurrence.color_kind === "UNKNOWN_BIRTH") {
+        return {
+            key: "UNKNOWN_BIRTH",
+            kind: "UNKNOWN_BIRTH",
+            label: "Naissance inconnue",
+            statusLabel: null,
+            colorCss: occurrence.color_css,
+            occurrencesCount: 1,
+        };
+    }
+
+    return null;
+}
+
+function compareLegendEntries(first, second) {
+    const rank = {
+        GEOGRAPHIC: 0,
+        UNVERIFIED_PLACE: 1,
+        UNKNOWN_BIRTH: 2,
+    };
+    const rankDifference = rank[first.kind] - rank[second.kind];
+
+    if (rankDifference !== 0) {
+        return rankDifference;
+    }
+
+    if (first.kind === "UNKNOWN_BIRTH") {
+        return 0;
+    }
+
+    if (first.occurrencesCount !== second.occurrencesCount) {
+        return second.occurrencesCount - first.occurrencesCount;
+    }
+
+    return first.label.localeCompare(second.label, "fr");
 }
 
 

@@ -514,6 +514,14 @@ def create_app(
                 if color_service is not None
                 else None
             )
+            (
+                birth_place_original_name,
+                birth_place_display_name,
+            ) = (
+                _birth_place_display_fields(person, enrichments)
+                if color_service is not None
+                else (None, None)
+            )
 
             result.append(
                 SosaOccurrenceResponse(
@@ -524,8 +532,11 @@ def create_app(
                         if person is not None
                         else None
                     ),
+                    birth_place_original_name=birth_place_original_name,
+                    birth_place_display_name=birth_place_display_name,
                     color_kind=color.kind if color is not None else None,
                     color_css=color.css if color is not None else None,
+                    color_reliable=color.reliable if color is not None else None,
                 )
             )
 
@@ -636,6 +647,28 @@ def _birth_place_color_service(
             )
         )
     )
+
+
+def _birth_place_display_fields(
+    person: Person | None,
+    enrichments: dict[str, PlaceEnrichment],
+) -> tuple[str | None, str | None]:
+    if person is None:
+        return None, None
+
+    original_name = get_birth_place(person)
+    if original_name is None:
+        return None, None
+
+    enrichment = enrichments.get(original_name)
+    display_name = (
+        enrichment.normalized_name.strip()
+        if enrichment is not None
+        and enrichment.normalized_name is not None
+        and enrichment.normalized_name.strip()
+        else original_name
+    )
+    return original_name, display_name
 
 
 def _color_for_birth_place(
