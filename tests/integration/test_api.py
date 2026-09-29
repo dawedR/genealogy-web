@@ -292,8 +292,35 @@ def test_static_javascript():
     assert "setFanViewBox" in response.text
     assert "labelTransform" in response.text
     assert "getFanLabelConfig" in response.text
-    assert "buildPersonLabelLines" in response.text
+    assert "buildPersonLabelVariants" in response.text
+    assert "buildSecondaryLabelLines" in response.text
+    assert "abbreviatePersonName" in response.text
     assert "formatEventLabel" in response.text
+
+
+def test_static_javascript_uses_ordered_label_degradation():
+    with make_client() as client:
+        response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+
+    script = response.text
+
+    variants_start = script.index("function buildPersonLabelVariants")
+    variants_end = script.index(
+        "function buildPrimaryLabelLines",
+        variants_start,
+    )
+    variants = script[variants_start:variants_end]
+
+    assert '"full"' in variants
+    assert '"year"' in variants
+    assert variants.index('"full"') < variants.index('"year"')
+    assert "config,\n            true," in variants
+    assert "abbreviatePersonName" in script
+    assert "buildPersonLabelLines" not in script
+    assert 'precision === "year"' in script
+    assert "variants[variants.length - 1]" in script
 
 def test_search_uploaded_people_by_birth_year():
     with make_client() as client:

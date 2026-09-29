@@ -762,14 +762,14 @@ function addFanLabel(
             generation,
         );
 
-    const lines =
-        buildPersonLabelLines(
+    const labelVariants =
+        buildPersonLabelVariants(
             occurrence,
             generation,
             labelConfig,
         );
 
-    if (lines.length === 0) {
+    if (labelVariants.length === 0) {
         return;
     }
 
@@ -789,7 +789,7 @@ function addFanLabel(
 
     fitFanLabel(
         text,
-        lines,
+        labelVariants,
         availableWidth,
         availableHeight,
         generation,
@@ -833,36 +833,130 @@ function labelTransform(
     );
 }
 
-function buildPersonLabelLines(
+function buildPersonLabelVariants(
     occurrence,
     generation,
     config,
 ) {
     const person = occurrence.person;
 
+    const fullSecondary = buildSecondaryLabelLines(
+        person,
+        config,
+        "full",
+    );
+
+    const yearSecondary = buildSecondaryLabelLines(
+        person,
+        config,
+        "year",
+    );
+
+    const fullPrimary = buildPrimaryLabelLines(
+        occurrence,
+        person,
+        generation,
+        config,
+    );
+
+    const variants = [];
+
+    /*
+     * Prefer every selected datum, then only the year part of dates.
+     * Neither step can introduce information disabled by the user.
+     */
+    addLabelVariant(
+        variants,
+        [...fullPrimary, ...fullSecondary],
+    );
+
+    addLabelVariant(
+        variants,
+        [...fullPrimary, ...yearSecondary],
+    );
+
+    /*
+     * From the year-only form, remove optional details one at a time.
+     * The primary identity remains; if none was requested, retain the
+     * first selected detail rather than rendering an empty label.
+     */
+    const essentialSecondary =
+        fullPrimary.length === 0 &&
+        yearSecondary.length > 0
+            ? [yearSecondary[0]]
+            : [];
+
+    for (
+        let count = yearSecondary.length - 1;
+        count >= essentialSecondary.length;
+        count -= 1
+    ) {
+        addLabelVariant(
+            variants,
+            [...fullPrimary, ...yearSecondary.slice(0, count)],
+        );
+    }
+
+    if (config.showName) {
+        const abbreviatedPrimary = buildPrimaryLabelLines(
+            occurrence,
+            person,
+            generation,
+            config,
+            true,
+        );
+
+        addLabelVariant(variants, abbreviatedPrimary);
+    }
+
+    return variants;
+}
+
+
+function buildPrimaryLabelLines(
+    occurrence,
+    person,
+    generation,
+    config,
+    abbreviateName = false,
+) {
     const primary = [];
-    const secondary = [];
 
     if (config.showSosa) {
         primary.push(`S${occurrence.sosa}`);
     }
 
     if (config.showName) {
-        const name =
-            `${person.given_names} ${person.surname}`
-                .trim();
+        const name = abbreviateName
+            ? abbreviatePersonName(person)
+            : formatPersonName(person);
 
         if (name) {
             primary.push(name);
         }
     }
 
+    if (generation >= 6 || abbreviateName) {
+        return [primary.join(" ")].filter(Boolean);
+    }
+
+    return primary;
+}
+
+
+function buildSecondaryLabelLines(
+    person,
+    config,
+    datePrecision,
+) {
+    const secondary = [];
+
     if (config.showBirth) {
-        const birth =
-            formatEventLabel(
-                "°",
-                person.birth_date,
-            );
+        const birth = formatEventLabel(
+            "°",
+            person.birth_date,
+            datePrecision,
+        );
 
         if (birth) {
             secondary.push(birth);
@@ -874,11 +968,11 @@ function buildPersonLabelLines(
     }
 
     if (config.showDeath) {
-        const death =
-            formatEventLabel(
-                "†",
-                person.death_date,
-            );
+        const death = formatEventLabel(
+            "†",
+            person.death_date,
+            datePrecision,
+        );
 
         if (death) {
             secondary.push(death);
@@ -889,23 +983,40 @@ function buildPersonLabelLines(
         secondary.push(person.death_place);
     }
 
-    /*
-     * Outer generations need a compact first choice.
-     * fitFanLabel() can still remove secondary lines later.
-     */
-    if (generation >= 6) {
-        return [
-            primary.join(" "),
-            ...secondary,
-        ].filter(Boolean);
-    }
-
-    return [
-        ...primary,
-        ...secondary,
-    ];
+    return secondary;
 }
 
+
+function addLabelVariant(variants, lines) {
+    if (lines.length === 0) {
+        return;
+    }
+
+    const key = lines.join("\u0000");
+
+    if (!variants.some(variant => variant.join("\u0000") === key)) {
+        variants.push(lines);
+    }
+}
+
+
+function formatPersonName(person) {
+    return `${person.given_names} ${person.surname}`.trim();
+}
+
+
+function abbreviatePersonName(person) {
+    const abbreviatedGivenNames = person.given_names
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(name => `${name[0]}.`)
+        .join(" ");
+
+    return [
+        abbreviatedGivenNames,
+        person.surname,
+    ].filter(Boolean).join(" ");
+}
 
 function getLabelAvailableWidth(
     sector,
@@ -982,63 +1093,37 @@ function getLabelAvailableHeight(
 
 function fitFanLabel(
     text,
-    lines,
+    variants,
     maxWidth,
     maxHeight,
     generation,
 ) {
-    let fontSize =
-        initialFanFontSize(generation);
-
     const minFontSize = 5.5;
 
-    while (fontSize >= minFontSize) {
-        populateFanText(
-            text,
-            lines,
-            fontSize,
-        );
+    for (const lines of variants) {
+        let fontSize = initialFanFontSize(generation);
 
-        const box =
-            text.getBBox();
+        while (fontSize >= minFontSize) {
+            populateFanText(text, lines, fontSize);
 
-        if (
-            box.width <= maxWidth &&
-            box.height <= maxHeight
-        ) {
-            return;
+            const box = text.getBBox();
+
+            if (
+                box.width <= maxWidth &&
+                box.height <= maxHeight
+            ) {
+                return;
+            }
+
+            fontSize -= 0.5;
         }
-
-        fontSize -= 0.5;
     }
 
-    if (lines.length > 2) {
-        fitFanLabel(
-            text,
-            lines.slice(0, -1),
-            maxWidth,
-            maxHeight,
-            generation,
-        );
-
-        return;
-    }
-
-    if (lines.length === 2) {
-        fitFanLabel(
-            text,
-            [lines[1]],
-            maxWidth,
-            maxHeight,
-            generation,
-        );
-
-        return;
-    }
+    const finalLines = variants[variants.length - 1];
 
     populateFanText(
         text,
-        lines,
+        finalLines,
         minFontSize,
     );
 
@@ -1047,7 +1132,6 @@ function fitFanLabel(
         maxWidth,
     );
 }
-
 
 function initialFanFontSize(generation) {
     if (generation === 0) {
@@ -1240,9 +1324,16 @@ function getFanLabelConfig() {
 function formatEventLabel(
     symbol,
     value,
+    precision = "full",
 ) {
     if (!value) {
         return "";
+    }
+
+    if (precision === "year") {
+        const match = value.match(/\b\d{4}\b/);
+
+        return match ? `${symbol} ${match[0]}` : "";
     }
 
     return `${symbol} ${value}`;
