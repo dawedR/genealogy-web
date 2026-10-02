@@ -42,10 +42,17 @@ from src.api.schemas import (
     PlaceInventoryResponse,
     SosaOccurrenceResponse,
     TreeDiagnosticResponse,
+    TreeCentralFamilyCoreResponse,
+    LayoutBoundsResponse,
+    LayoutEdgeResponse,
+    LayoutPointResponse,
+    PersonLayoutNodeResponse,
     TreeParentChildLinkResponse,
+    TreeLayoutResponse,
     TreePersonOccurrenceResponse,
     TreeUnionOccurrenceResponse,
     TreeUnionPartnerResponse,
+    UnionLayoutNodeResponse,
 )
 from src.domain.models import (
     Genealogy,
@@ -90,6 +97,7 @@ from src.services.geocoding import (
 from src.services.geoapify import GeoapifyGeocoder
 from src.services.places import inventory_places
 from src.services.sosa import build_sosa_ancestry
+from src.services.tree_layout import TreeLayout, layout_combined_tree
 from src.storage.place_enrichments import (
     InMemoryPlaceEnrichmentStore,
     JsonPlaceEnrichmentStore,
@@ -482,7 +490,7 @@ def create_app(
     def combined_tree(
         person_id: str,
         request: Request,
-        ancestor_generations: int = Query(default=4, ge=1, le=10),
+        ancestor_generations: int = Query(default=4, ge=0, le=10),
         descendant_generations: int = Query(default=3, ge=0, le=10),
         show_siblings: bool = Query(default=True),
     ) -> CombinedTreeResponse:
@@ -499,7 +507,11 @@ def create_app(
                 show_siblings=show_siblings,
             ),
         )
-        return _combined_tree_response(projection, current)
+        return _combined_tree_response(
+            projection,
+            current,
+            layout_combined_tree(projection),
+        )
 
     @app.get(
         "/people/{person_id}/sosa",
@@ -627,9 +639,15 @@ def create_app(
 def _combined_tree_response(
     projection,
     genealogy: Genealogy,
+    layout: TreeLayout,
 ) -> CombinedTreeResponse:
     return CombinedTreeResponse(
         root_occurrence_id=projection.root_occurrence_id,
+        central_family_core=TreeCentralFamilyCoreResponse(
+            root_occurrence_id=projection.central_family_core.root_occurrence_id,
+            member_occurrence_ids=list(projection.central_family_core.member_occurrence_ids),
+            union_occurrence_ids=list(projection.central_family_core.union_occurrence_ids),
+        ),
         options=CombinedTreeOptionsResponse(
             root_person_id=projection.options.root_person_id,
             ancestor_generations=projection.options.ancestor_generations,
@@ -666,6 +684,50 @@ def _combined_tree_response(
             _tree_diagnostic_response(diagnostic)
             for diagnostic in projection.diagnostics
         ],
+        layout=_tree_layout_response(layout),
+    )
+
+
+def _tree_layout_response(layout: TreeLayout) -> TreeLayoutResponse:
+    return TreeLayoutResponse(
+        person_nodes=[
+            PersonLayoutNodeResponse(
+                occurrence_id=node.occurrence_id,
+                x=node.x,
+                y=node.y,
+                width=node.width,
+                height=node.height,
+            )
+            for node in layout.person_nodes
+        ],
+        union_nodes=[
+            UnionLayoutNodeResponse(
+                union_occurrence_id=node.union_occurrence_id,
+                x=node.x,
+                y=node.y,
+            )
+            for node in layout.union_nodes
+        ],
+        edges=[
+            LayoutEdgeResponse(
+                kind=edge.kind.value,
+                union_occurrence_id=edge.union_occurrence_id,
+                person_occurrence_id=edge.person_occurrence_id,
+                points=[
+                    LayoutPointResponse(x=point.x, y=point.y)
+                    for point in edge.points
+                ],
+            )
+            for edge in layout.edges
+        ],
+        width=layout.width,
+        height=layout.height,
+        bounds=LayoutBoundsResponse(
+            x=layout.bounds.x,
+            y=layout.bounds.y,
+            width=layout.bounds.width,
+            height=layout.bounds.height,
+        ),
     )
 
 

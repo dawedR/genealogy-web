@@ -3,6 +3,8 @@ from urllib import response
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
+from src.services.combined_tree import CombinedTreeOptions, build_combined_tree
+from src.services.tree_layout import layout_combined_tree
 from src.domain.models import (
     Event,
     Family,
@@ -1229,6 +1231,39 @@ def test_sosa_geographic_fields_keep_unverified_places_separate():
 
 
 
+def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
+    with make_client() as client:
+        response = client.get("/")
+        javascript = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert javascript.status_code == 200
+    for element_id in (
+        "tree-ancestor-generations",
+        "tree-descendant-generations",
+        "tree-show-siblings",
+        "tree-chart",
+        "tree-diagnostics",
+    ):
+        assert f'id="{element_id}"' in response.text
+    assert 'id="tree-ancestor-generations"' in response.text
+    assert 'min="0"' in response.text
+    assert 'max="10"' in response.text
+    assert 'loadTreeChart(person.id);' in javascript.text
+    assert 'tree.layout.person_nodes' in javascript.text
+    assert 'tree.layout.edges' in javascript.text
+    assert 'tree.layout.union_nodes' not in javascript.text
+    assert 'tree-union' not in javascript.text
+    assert '`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`' in javascript.text
+    assert 'edge.points.map(point => `${point.x},${point.y}`).join(" ")' in javascript.text
+    assert 'for (const edge of tree.layout.edges)' in javascript.text
+    assert 'for (const node of tree.layout.person_nodes)' in javascript.text
+    assert 'treeRequestSerial' in javascript.text
+    assert 'layout_combined_tree' not in javascript.text
+    assert 'parent_child_links' not in javascript.text
+    assert 'central_family_core' not in javascript.text
+
+
 def tree_api_genealogy() -> Genealogy:
     return Genealogy(
         persons={
@@ -1288,12 +1323,51 @@ def test_tree_endpoint_serializes_simple_projection_and_person_details():
         "surname": "Test",
         "sex": "M",
     }
-    assert [item["family_id"] for item in data["union_occurrences"]] == ["@P@", "@U@"]
+    assert [item["family_id"] for item in data["union_occurrences"]] == ["@U@", "@P@"]
     assert any(
         link["union_occurrence_id"] == "union:person:root:family:@U@"
         for link in data["parent_child_links"]
     )
     assert data["diagnostics"] == []
+    assert data["central_family_core"] == {
+        "root_occurrence_id": "person:root",
+        "member_occurrence_ids": [
+            "person:root",
+            "person:union:person:root:family:@U@:partner:1",
+        ],
+        "union_occurrence_ids": ["union:person:root:family:@U@"],
+    }
+    layout = data["layout"]
+    expected_layout = layout_combined_tree(
+        build_combined_tree(
+            tree_api_genealogy(),
+            CombinedTreeOptions("@R@", 1, 1, show_siblings=False),
+        )
+    )
+    assert layout["bounds"] == {
+        "x": expected_layout.bounds.x,
+        "y": expected_layout.bounds.y,
+        "width": expected_layout.bounds.width,
+        "height": expected_layout.bounds.height,
+    }
+    assert {
+        node["occurrence_id"] for node in layout["person_nodes"]
+    } == {
+        occurrence["id"] for occurrence in data["person_occurrences"]
+    }
+    assert {
+        node["union_occurrence_id"] for node in layout["union_nodes"]
+    } == {
+        occurrence["id"] for occurrence in data["union_occurrences"]
+    }
+    assert all(edge["points"] for edge in layout["edges"])
+    person_ids = {item["id"] for item in data["person_occurrences"]}
+    union_ids = {item["id"] for item in data["union_occurrences"]}
+    assert all(
+        edge["union_occurrence_id"] in union_ids
+        and edge["person_occurrence_id"] in person_ids
+        for edge in layout["edges"]
+    )
 
 
 def test_tree_endpoint_honours_independent_depths_and_sibling_option():
@@ -1311,12 +1385,23 @@ def test_tree_endpoint_honours_independent_depths_and_sibling_option():
     assert without_siblings.status_code == 200
     assert with_siblings.status_code == 200
     assert {item["generation"] for item in without_siblings.json()["person_occurrences"]} == {-1, 0}
-    assert [item["person_id"] for item in without_siblings.json()["person_occurrences"]] == ["@R@", "@F@", "@M@"]
-    assert [item["person_id"] for item in with_siblings.json()["person_occurrences"]] == ["@R@", "@F@", "@M@", "@SB@"]
-    assert all(
-        item["family_id"] != "@U@"
+    assert [item["person_id"] for item in without_siblings.json()["person_occurrences"]] == ["@R@", "@S@", "@F@", "@M@"]
+    assert [item["person_id"] for item in with_siblings.json()["person_occurrences"]] == ["@R@", "@S@", "@F@", "@M@", "@SB@"]
+    assert any(
+        item["family_id"] == "@U@"
         for item in with_siblings.json()["union_occurrences"]
     )
+    assert not any(
+        link["union_occurrence_id"] == "union:person:root:family:@U@"
+        for link in with_siblings.json()["parent_child_links"]
+    )
+    for response in (without_siblings, with_siblings):
+        data = response.json()
+        assert data["central_family_core"]["union_occurrence_ids"] == [
+            "union:person:root:family:@U@"
+        ]
+        assert {data["person_occurrences"][index]["person_id"] for index in range(2)} == {"@R@", "@S@"}
+        assert not any(item["generation"] > 0 for item in data["person_occurrences"])
 
 
 def test_tree_endpoint_serializes_multiple_unions_and_children_by_union():
@@ -1344,6 +1429,24 @@ def test_tree_endpoint_serializes_multiple_unions_and_children_by_union():
         for union in data["union_occurrences"]
     }
     assert children_by_union == {"@U1@": ["@C@", "@D@"], "@U2@": ["@F@"]}
+    assert len(data["central_family_core"]["member_occurrence_ids"]) == 3
+    assert len(data["central_family_core"]["union_occurrence_ids"]) == 2
+
+    with TestClient(create_app(genealogy)) as client:
+        no_descendants = client.get(
+            "/people/@A@/tree",
+            params={"ancestor_generations": 0, "descendant_generations": 0, "show_siblings": "false"},
+        )
+    no_descendants_data = no_descendants.json()
+    assert no_descendants.status_code == 200
+    assert {item["person_id"] for item in no_descendants_data["person_occurrences"]} == {
+        "@A@", "@B@", "@E@"
+    }
+    assert {item["family_id"] for item in no_descendants_data["union_occurrences"]} == {
+        "@U1@", "@U2@"
+    }
+    assert no_descendants_data["parent_child_links"] == []
+    assert len(no_descendants_data["layout"]["union_nodes"]) == 2
 
 
 def test_tree_endpoint_serializes_unknown_and_broken_parent_references():
@@ -1412,11 +1515,72 @@ def test_tree_endpoint_serializes_cycle_diagnostic_and_is_deterministic():
 def test_tree_endpoint_reports_missing_root_and_invalid_parameters():
     with make_client() as client:
         missing = client.get("/people/@UNKNOWN@/tree")
-        invalid_ancestor_low = client.get("/people/@I3@/tree", params={"ancestor_generations": 0})
+        zero_ancestor = client.get("/people/@I3@/tree", params={"ancestor_generations": 0})
+        invalid_ancestor_low = client.get("/people/@I3@/tree", params={"ancestor_generations": -1})
         invalid_ancestor_high = client.get("/people/@I3@/tree", params={"ancestor_generations": 11})
         invalid_descendant = client.get("/people/@I3@/tree", params={"descendant_generations": 11})
 
     assert missing.status_code == 404
+    assert zero_ancestor.status_code == 200
     assert invalid_ancestor_low.status_code == 422
     assert invalid_ancestor_high.status_code == 422
     assert invalid_descendant.status_code == 422
+
+
+def test_tree_endpoint_transmits_every_orthogonal_layout_point_unchanged():
+    genealogy = tree_api_genealogy()
+    options = CombinedTreeOptions("@R@", 1, 1, show_siblings=False)
+    expected = layout_combined_tree(build_combined_tree(genealogy, options))
+    with TestClient(create_app(genealogy)) as client:
+        response = client.get(
+            "/people/@R@/tree",
+            params={
+                "ancestor_generations": 1,
+                "descendant_generations": 1,
+                "show_siblings": "false",
+            },
+        )
+
+    assert response.status_code == 200
+    edges = response.json()["layout"]["edges"]
+    assert len(edges) == len(expected.edges)
+    assert any(len(edge["points"]) > 2 for edge in edges)
+    for serialized, original in zip(edges, expected.edges, strict=True):
+        assert serialized["kind"] == original.kind.value
+        assert serialized["union_occurrence_id"] == original.union_occurrence_id
+        assert serialized["person_occurrence_id"] == original.person_occurrence_id
+        assert serialized["points"] == [
+            {"x": point.x, "y": point.y} for point in original.points
+        ]
+        assert all(
+            first["x"] == second["x"] or first["y"] == second["y"]
+            for first, second in zip(serialized["points"], serialized["points"][1:])
+        )
+
+
+def test_tree_endpoint_builds_projection_and_layout_once(monkeypatch):
+    import importlib
+
+    api_module = importlib.import_module("src.api.app")
+    original_projection_builder = api_module.build_combined_tree
+    original_layout_builder = api_module.layout_combined_tree
+    calls = {"projection": 0, "layout": 0}
+
+    def build_projection(*args, **kwargs):
+        calls["projection"] += 1
+        return original_projection_builder(*args, **kwargs)
+
+    def build_layout(*args, **kwargs):
+        calls["layout"] += 1
+        return original_layout_builder(*args, **kwargs)
+
+    monkeypatch.setattr(api_module, "build_combined_tree", build_projection)
+    monkeypatch.setattr(api_module, "layout_combined_tree", build_layout)
+    with TestClient(create_app(tree_api_genealogy())) as client:
+        response = client.get(
+            "/people/@R@/tree",
+            params={"ancestor_generations": 1, "descendant_generations": 1},
+        )
+
+    assert response.status_code == 200
+    assert calls == {"projection": 1, "layout": 1}

@@ -342,6 +342,54 @@
             <ul id="fan-legend-list"></ul>
         </aside>
     </section>
+
+    <section>
+        <h2>6. Arbre familial</h2>
+
+        <div class="tree-controls">
+            <label for="tree-ancestor-generations">
+                Générations ascendantes :
+            </label>
+            <input
+                id="tree-ancestor-generations"
+                type="number"
+                min="0"
+                max="10"
+                value="2"
+            >
+
+            <label for="tree-descendant-generations">
+                Générations descendantes :
+            </label>
+            <input
+                id="tree-descendant-generations"
+                type="number"
+                min="0"
+                max="10"
+                value="2"
+            >
+
+            <label>
+                <input id="tree-show-siblings" type="checkbox">
+                Afficher la fratrie
+            </label>
+        </div>
+
+        <p id="tree-status" class="status">
+            Sélectionnez une personne pour afficher l’arbre.
+        </p>
+
+        <div id="tree-container">
+            <svg
+                id="tree-chart"
+                viewBox="0 0 1 1"
+                role="img"
+                aria-label="Arbre familial"
+            ></svg>
+        </div>
+
+        <p id="tree-diagnostics" hidden></p>
+    </section>
 </main>
 
 <script src="/static/app.js"></script>

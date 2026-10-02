@@ -151,6 +151,54 @@ class TreeParentChildLinkResponse(BaseModel):
     child_occurrence_id: str
 
 
+class TreeCentralFamilyCoreResponse(BaseModel):
+    root_occurrence_id: str
+    member_occurrence_ids: list[str]
+    union_occurrence_ids: list[str]
+
+
+class LayoutPointResponse(BaseModel):
+    x: float
+    y: float
+
+
+class LayoutBoundsResponse(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class PersonLayoutNodeResponse(BaseModel):
+    occurrence_id: str
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class UnionLayoutNodeResponse(BaseModel):
+    union_occurrence_id: str
+    x: float
+    y: float
+
+
+class LayoutEdgeResponse(BaseModel):
+    kind: str
+    union_occurrence_id: str
+    person_occurrence_id: str
+    points: list[LayoutPointResponse]
+
+
+class TreeLayoutResponse(BaseModel):
+    person_nodes: list[PersonLayoutNodeResponse]
+    union_nodes: list[UnionLayoutNodeResponse]
+    edges: list[LayoutEdgeResponse]
+    width: float
+    height: float
+    bounds: LayoutBoundsResponse
+
+
 class MultipleParentFamiliesDiagnosticResponse(BaseModel):
     code: Literal["MULTIPLE_PARENT_FAMILIES"]
     person_id: str
@@ -184,7 +232,9 @@ TreeDiagnosticResponse = (
 class CombinedTreeResponse(BaseModel):
     root_occurrence_id: str
     options: CombinedTreeOptionsResponse
+    central_family_core: TreeCentralFamilyCoreResponse
     person_occurrences: list[TreePersonOccurrenceResponse]
     union_occurrences: list[TreeUnionOccurrenceResponse]
     parent_child_links: list[TreeParentChildLinkResponse]
     diagnostics: list[TreeDiagnosticResponse]
+    layout: TreeLayoutResponse

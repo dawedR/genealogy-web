@@ -372,3 +372,52 @@ button {
     color: #155724;
     background: #d8f3df;
 }
+
+
+.tree-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+#tree-container {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid #ddd;
+    background: #fafafa;
+}
+
+#tree-chart {
+    display: block;
+    width: 100%;
+    min-width: 960px;
+    height: auto;
+    background: white;
+}
+
+.tree-edge {
+    fill: none;
+    stroke: #555;
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+}
+
+.tree-person-card {
+    fill: #fff;
+    stroke: #333;
+    stroke-width: 1.25;
+    vector-effect: non-scaling-stroke;
+}
+
+.tree-person-label {
+    fill: #202124;
+    font-size: 14px;
+    pointer-events: none;
+}
+
+#tree-diagnostics {
+    margin-bottom: 0;
+    color: #7a4d00;
+}
