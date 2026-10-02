@@ -113,7 +113,12 @@ def layout_combined_tree(
     tree: CombinedTree,
     configuration: TreeLayoutConfiguration | None = None,
 ) -> TreeLayout:
-    """Turn an already selected CombinedTree topology into deterministic geometry."""
+    """Turn a selected CombinedTree topology into deterministic geometry.
+
+    The central family core is placed first and remains compact. Ancestor and
+    descendant envelopes are then measured independently around that fixed G0
+    band; their width never changes the position of central partners.
+    """
 
     config = configuration or TreeLayoutConfiguration()
     people = {occurrence.id: occurrence for occurrence in tree.person_occurrences}
@@ -124,7 +129,19 @@ def layout_combined_tree(
         children_by_union.setdefault(link.union_occurrence_id, []).append(link.child_occurrence_id)
         incoming_union_by_child[link.child_occurrence_id] = link.union_occurrence_id
 
-    root_id = tree.root_occurrence_id
+    core = tree.central_family_core
+    core_member_ids = list(core.member_occurrence_ids)
+    core_union_ids = list(core.union_occurrence_ids)
+    core_member_set = set(core_member_ids)
+    core_union_set = set(core_union_ids)
+    if core.root_occurrence_id != tree.root_occurrence_id:
+        raise ValueError("Tree central core root must match tree root")
+    if not core_member_ids or core_member_ids[0] != tree.root_occurrence_id:
+        raise ValueError("Tree central core must start with the root occurrence")
+    if not set(core_member_ids) <= set(people):
+        raise ValueError("Tree central core references unknown person occurrences")
+    if not set(core_union_ids) <= set(unions):
+        raise ValueError("Tree central core references unknown union occurrences")
 
     def is_layout_leaf(occurrence: TreePersonOccurrence) -> bool:
         return occurrence.person_id is None or occurrence.cycle_truncated
@@ -144,7 +161,8 @@ def layout_combined_tree(
         return [
             union.id
             for union in tree.union_occurrences
-            if union.generation == occurrence.generation
+            if union.id not in core_union_set
+            and union.generation == occurrence.generation
             and any(partner.occurrence_id == occurrence_id for partner in union.partners)
         ]
 
@@ -163,8 +181,10 @@ def layout_combined_tree(
             )
 
         union = unions[parent_union_id]
-        parent_ids = [partner.occurrence_id for partner in union.partners]
-        parent_measures = [measure_ancestry(parent_id) for parent_id in parent_ids]
+        parent_measures = [
+            measure_ancestry(partner.occurrence_id)
+            for partner in union.partners
+        ]
         cursor = 0.0
         placed_parents: list[_MeasuredSubtree] = []
         for parent_measure in parent_measures:
@@ -183,19 +203,11 @@ def layout_combined_tree(
         )
         for parent_measure in placed_parents:
             merge(result, parent_measure)
-        result.width = max(
-            result.width,
-            union_x + config.person_width / 2,
-        )
+        result.width = max(result.width, union_x + config.person_width / 2)
         return result
 
     def measure_descendancy(occurrence_id: str) -> _MeasuredSubtree:
-        """Measure one descendant branch with a local, shared marriage band.
-
-        The person occurrence is represented once. Its partners and union
-        points occupy compact slots beside it; child envelopes are packed in a
-        separate lower band and therefore do not push spouses outward.
-        """
+        """Measure a non-central descendant branch with its local marriage band."""
 
         owned_unions = descendant_unions_for(occurrence_id)
         root_x = config.person_width / 2
@@ -223,15 +235,12 @@ def layout_combined_tree(
                         config.person_width + config.partner_gap
                     )
                     result.person_x[partner_id] = partner_x
-                    pair_right = max(
-                        pair_right,
-                        partner_x + config.person_width / 2,
-                    )
+                    pair_right = max(pair_right, partner_x + config.person_width / 2)
                     if first_partner_x is None:
                         first_partner_x = partner_x
                 result.union_x[union_id] = (root_x + first_partner_x) / 2
             else:
-                result.union_x[union_id] = root_x + config.person_width / 2
+                result.union_x[union_id] = root_x
 
         child_cursor = 0.0
         for union_id in owned_unions:
@@ -247,51 +256,110 @@ def layout_combined_tree(
                 child_cursor -= config.sibling_gap
                 child_cursor += config.family_gap
 
-        children_right = (
-            child_cursor - config.family_gap
-            if child_cursor > 0
-            else 0.0
-        )
+        children_right = child_cursor - config.family_gap if child_cursor > 0 else 0.0
         result.width = max(pair_right, children_right)
         return result
 
-    ancestry = measure_ancestry(root_id)
-    descendant_root_ids = [root_id]
-    root_parent_union_id = parent_union_for(root_id)
-    if tree.options.show_siblings and root_parent_union_id is not None:
-        linked_roots = [
-            child_id
-            for child_id in children_by_union.get(root_parent_union_id, [])
-            if people[child_id].generation == 0
+    # The central band is intentionally local: broad ancestor or child forests
+    # cannot increase the distance between the root and its central partners.
+    root_id = tree.root_occurrence_id
+    root_x = 0.0
+    person_x: dict[str, float] = {root_id: root_x}
+    union_x: dict[str, float] = {}
+    other_member_ids = core_member_ids[1:]
+    if len(other_member_ids) == 1:
+        slots = [1]
+    else:
+        slots = [slot for pair in range(1, len(other_member_ids) + 1) for slot in (-pair, pair)]
+        slots = slots[:len(other_member_ids)]
+    for occurrence_id, slot in zip(other_member_ids, slots, strict=True):
+        person_x[occurrence_id] = root_x + slot * (config.person_width + config.partner_gap)
+
+    for union_id in core_union_ids:
+        union = unions[union_id]
+        partner_centers = [
+            person_x[partner.occurrence_id]
+            for partner in union.partners
+            if partner.occurrence_id in person_x
         ]
-        if linked_roots:
-            descendant_root_ids = linked_roots
+        union_x[union_id] = (
+            sum(partner_centers) / len(partner_centers)
+            if partner_centers
+            else root_x
+        )
 
-    descendant_measures: list[_MeasuredSubtree] = []
-    descendant_cursor = 0.0
-    for descendant_root_id in descendant_root_ids:
-        measure = measure_descendancy(descendant_root_id).shifted(descendant_cursor)
-        descendant_measures.append(measure)
-        descendant_cursor += measure.width + config.sibling_gap
-    descendancy = _MeasuredSubtree(
-        root_occurrence_id=root_id,
-        width=descendant_cursor - config.sibling_gap,
-        root_x=next(
-            measure.root_x
-            for measure in descendant_measures
-            if measure.root_occurrence_id == root_id
-        ),
-    )
-    for measure in descendant_measures:
-        merge(descendancy, measure)
+    core_min_x = min(person_x[item] for item in core_member_ids)
+    core_max_x = max(person_x[item] for item in core_member_ids)
+    core_center_x = (core_min_x + core_max_x) / 2
 
-    ancestry_offset = descendancy.root_x - ancestry.root_x
-    ancestry = ancestry.shifted(ancestry_offset)
+    # Pack each actual ancestor envelope independently. The central card itself
+    # remains in the fixed band; only its ancestors and parent union are moved.
+    ancestry_components = [
+        (member_id, measure_ancestry(member_id))
+        for member_id in sorted(core_member_ids, key=lambda item: person_x[item])
+        if parent_union_for(member_id) is not None and not is_layout_leaf(people[member_id])
+    ]
+    ancestry_width = sum(component.width for _, component in ancestry_components)
+    ancestry_width += config.family_gap * max(0, len(ancestry_components) - 1)
+    ancestry_cursor = core_center_x - ancestry_width / 2
+    for member_id, component in ancestry_components:
+        placed = component.shifted(ancestry_cursor)
+        for occurrence_id, x in placed.person_x.items():
+            if occurrence_id != member_id:
+                person_x[occurrence_id] = x
+        union_x.update(placed.union_x)
+        ancestry_cursor += component.width + config.family_gap
 
-    person_x = dict(ancestry.person_x)
-    person_x.update(descendancy.person_x)
-    union_x = dict(ancestry.union_x)
-    union_x.update(descendancy.union_x)
+    # Measure child forests per central union. Each family remains a separate
+    # block, packed below the compact core instead of stretching the core band.
+    descendant_components: list[list[_MeasuredSubtree]] = []
+    for union_id in core_union_ids:
+        descendant_components.append(
+            [
+                measure_descendancy(child_id)
+                for child_id in children_by_union.get(union_id, [])
+            ]
+        )
+
+    group_widths: list[float] = []
+    for components in descendant_components:
+        if not components:
+            group_widths.append(0.0)
+            continue
+        group_widths.append(
+            sum(component.width for component in components)
+            + config.sibling_gap * (len(components) - 1)
+        )
+    nonempty_group_indices = [index for index, width in enumerate(group_widths) if width > 0]
+    descendant_width = sum(group_widths[index] for index in nonempty_group_indices)
+    descendant_width += config.family_gap * max(0, len(nonempty_group_indices) - 1)
+    descendant_cursor = core_center_x - descendant_width / 2
+    for index, components in enumerate(descendant_components):
+        if not components:
+            continue
+        for component in components:
+            placed = component.shifted(descendant_cursor)
+            merge_target = _MeasuredSubtree(root_id, 0, 0, person_x, union_x)
+            merge(merge_target, placed)
+            descendant_cursor += component.width + config.sibling_gap
+        descendant_cursor -= config.sibling_gap
+        descendant_cursor += config.family_gap
+
+    # Sibling roots are not central. Keep them deterministic and outside the
+    # core band while still allowing their regular descendant branches.
+    sibling_root_ids = [
+        occurrence.id
+        for occurrence in tree.person_occurrences
+        if occurrence.generation == 0
+        and occurrence.id not in core_member_set
+        and parent_union_for(occurrence.id) is not None
+    ]
+    sibling_cursor = core_max_x + config.person_width + config.family_gap
+    for sibling_id in sibling_root_ids:
+        placed = measure_descendancy(sibling_id).shifted(sibling_cursor)
+        merge_target = _MeasuredSubtree(root_id, 0, 0, person_x, union_x)
+        merge(merge_target, placed)
+        sibling_cursor += placed.width + config.family_gap
 
     if set(person_x) != set(people):
         missing = sorted(set(people) - set(person_x))
@@ -326,10 +394,7 @@ def layout_combined_tree(
             union_occurrence_id=union.id,
             x=union_x[union.id] + x_offset,
             y=(
-                person_y(next(
-                    people[partner.occurrence_id]
-                    for partner in union.partners
-                ))
+                person_y(people[union.partners[0].occurrence_id])
                 + config.person_height
                 + config.union_vertical_offset
             ),

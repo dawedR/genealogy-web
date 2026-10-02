@@ -64,6 +64,15 @@ class TreeParentChildLink:
     child_occurrence_id: str
 
 
+@dataclass(frozen=True)
+class TreeCentralFamilyCore:
+    """The root person, their central partners, and their own unions."""
+
+    root_occurrence_id: str
+    member_occurrence_ids: tuple[str, ...]
+    union_occurrence_ids: tuple[str, ...]
+
+
 class TreeDiagnosticCode(str, Enum):
     MULTIPLE_PARENT_FAMILIES = "MULTIPLE_PARENT_FAMILIES"
     CYCLE_TRUNCATED = "CYCLE_TRUNCATED"
@@ -132,6 +141,7 @@ class CombinedTree:
     union_occurrences: tuple[TreeUnionOccurrence, ...]
     parent_child_links: tuple[TreeParentChildLink, ...]
     diagnostics: tuple[TreeDiagnostic, ...]
+    central_family_core: TreeCentralFamilyCore
 
 
 @dataclass(frozen=True)
@@ -345,6 +355,79 @@ def build_combined_tree(
                 path_person_ids + (mother.person_id,),
             )
 
+    def add_descendant_union(
+        person: TreePersonOccurrence,
+        family: Family,
+        path_person_ids: tuple[str, ...],
+    ) -> tuple[TreeUnionOccurrence, tuple[TreePersonOccurrence, ...]]:
+        """Create one existing family and its contextual partner occurrences."""
+
+        union_id = f"union:{person.id}:family:{family.id}"
+        partners: list[TreeUnionPartner] = []
+        partner_occurrences: list[TreePersonOccurrence] = []
+        used_current_person = False
+
+        for index, partner_id in enumerate(family.partners):
+            if partner_id == person.person_id and not used_current_person:
+                partner_occurrence = person
+                used_current_person = True
+            else:
+                partner_occurrence = add_family_reference(
+                    f"person:{union_id}:partner:{index}",
+                    partner_id,
+                    person.generation,
+                    family_id=family.id,
+                    role=TreeReferenceRole.PARTNER,
+                    traversal=TreeTraversal.DESCENT,
+                    path_person_ids=path_person_ids,
+                )
+            partner_occurrences.append(partner_occurrence)
+            partners.append(
+                TreeUnionPartner(
+                    occurrence_id=partner_occurrence.id,
+                    role=_partner_role(family, partner_id),
+                )
+            )
+
+        union = TreeUnionOccurrence(
+            id=union_id,
+            family_id=family.id,
+            generation=person.generation,
+            partners=tuple(partners),
+        )
+        unions.append(union)
+        return union, tuple(partner_occurrences)
+
+    def add_descendant_children(
+        person: TreePersonOccurrence,
+        family: Family,
+        union: TreeUnionOccurrence,
+        depth: int,
+        path_person_ids: tuple[str, ...],
+    ) -> None:
+        for index, child_id in enumerate(family.children):
+            child = add_family_reference(
+                f"person:{union.id}:child:{index}",
+                child_id,
+                person.generation + 1,
+                family_id=family.id,
+                role=TreeReferenceRole.CHILD,
+                traversal=TreeTraversal.DESCENT,
+                path_person_ids=path_person_ids,
+            )
+            parent_child_links.append(
+                TreeParentChildLink(
+                    union_occurrence_id=union.id,
+                    child_occurrence_id=child.id,
+                )
+            )
+            if child.person_id is not None:
+                add_descendant_families(
+                    child,
+                    depth + 1,
+                    path_person_ids + (child.person_id,),
+                )
+
     def add_descendant_families(
         person: TreePersonOccurrence,
         depth: int,
@@ -358,108 +441,90 @@ def build_combined_tree(
             return
 
         for family in _partner_families(genealogy, person.person_id):
-            union_id = f"union:{person.id}:family:{family.id}"
-            partners: list[TreeUnionPartner] = []
-            used_current_person = False
-
-            for index, partner_id in enumerate(family.partners):
-                if partner_id == person.person_id and not used_current_person:
-                    partner_occurrence = person
-                    used_current_person = True
-                else:
-                    partner_occurrence = add_family_reference(
-                        f"person:{union_id}:partner:{index}",
-                        partner_id,
-                        person.generation,
-                        family_id=family.id,
-                        role=TreeReferenceRole.PARTNER,
-                        traversal=TreeTraversal.DESCENT,
-                        path_person_ids=path_person_ids,
-                    )
-
-                partners.append(
-                    TreeUnionPartner(
-                        occurrence_id=partner_occurrence.id,
-                        role=_partner_role(family, partner_id),
-                    )
-                )
-
-            unions.append(
-                TreeUnionOccurrence(
-                    id=union_id,
-                    family_id=family.id,
-                    generation=person.generation,
-                    partners=tuple(partners),
-                )
+            union, _ = add_descendant_union(person, family, path_person_ids)
+            add_descendant_children(
+                person,
+                family,
+                union,
+                depth,
+                path_person_ids,
             )
 
-            for index, child_id in enumerate(family.children):
-                child = add_family_reference(
-                    f"person:{union_id}:child:{index}",
-                    child_id,
-                    person.generation + 1,
-                    family_id=family.id,
-                    role=TreeReferenceRole.CHILD,
-                    traversal=TreeTraversal.DESCENT,
-                    path_person_ids=path_person_ids,
-                )
-                parent_child_links.append(
-                    TreeParentChildLink(
-                        union_occurrence_id=union_id,
-                        child_occurrence_id=child.id,
-                    )
-                )
-                if child.person_id is not None:
-                    add_descendant_families(
-                        child,
-                        depth + 1,
-                        path_person_ids + (child.person_id,),
-                    )
+
+    central_members: list[TreePersonOccurrence] = [root]
+    central_unions: list[tuple[Family, TreeUnionOccurrence]] = []
+    for family in _partner_families(genealogy, root.person_id):
+        union, partner_occurrences = add_descendant_union(
+            root,
+            family,
+            (root.person_id,),
+        )
+        central_unions.append((family, union))
+        for partner in partner_occurrences:
+            if partner.id != root.id:
+                central_members.append(partner)
+
+    central_family_core = TreeCentralFamilyCore(
+        root_occurrence_id=root.id,
+        member_occurrence_ids=tuple(member.id for member in central_members),
+        union_occurrence_ids=tuple(union.id for _, union in central_unions),
+    )
 
     add_parent_ancestry(
         root,
         depth=0,
         path_person_ids=(root.person_id,),
     )
+    for central_partner in central_members[1:]:
+        if central_partner.person_id is not None:
+            add_parent_ancestry(
+                central_partner,
+                depth=0,
+                path_person_ids=(central_partner.person_id,),
+            )
 
-    descendant_roots = [root]
+    if options.descendant_generations > 0:
+        for family, union in central_unions:
+            add_descendant_children(
+                root,
+                family,
+                union,
+                depth=0,
+                path_person_ids=(root.person_id,),
+            )
+
     if options.show_siblings:
         root_parent_family = canonical_parent_family_for(root.person_id).family
         if root_parent_family is not None:
-            descendant_roots = []
             parent_union_id = parent_union_ids.get(root.id)
             for index, child_id in enumerate(root_parent_family.children):
                 if child_id == root.person_id:
-                    sibling = root
-                else:
-                    sibling = add_family_reference(
-                        (
-                            "person:root:parent-family:"
-                            f"{root_parent_family.id}:child:{index}"
-                        ),
-                        child_id,
-                        0,
-                        family_id=root_parent_family.id,
-                        role=TreeReferenceRole.CHILD,
-                        traversal=TreeTraversal.DESCENT,
-                        path_person_ids=(root.person_id,),
-                    )
-                if parent_union_id is not None and sibling.id != root.id:
+                    continue
+                sibling = add_family_reference(
+                    (
+                        "person:root:parent-family:"
+                        f"{root_parent_family.id}:child:{index}"
+                    ),
+                    child_id,
+                    0,
+                    family_id=root_parent_family.id,
+                    role=TreeReferenceRole.CHILD,
+                    traversal=TreeTraversal.DESCENT,
+                    path_person_ids=(root.person_id,),
+                )
+                if parent_union_id is not None:
                     parent_child_links.append(
                         TreeParentChildLink(
                             union_occurrence_id=parent_union_id,
                             child_occurrence_id=sibling.id,
                         )
                     )
-                descendant_roots.append(sibling)
-
-    for descendant_root in descendant_roots:
-        if descendant_root.person_id is not None:
-            add_descendant_families(
-                descendant_root,
-                depth=0,
-                path_person_ids=(descendant_root.person_id,),
-            )
+                if sibling.person_id is not None:
+                    add_descendant_families(
+                        sibling,
+                        depth=0,
+                        path_person_ids=(sibling.person_id,),
+                    )
 
     return CombinedTree(
         root_occurrence_id=root.id,
@@ -468,6 +533,7 @@ def build_combined_tree(
         union_occurrences=tuple(unions),
         parent_child_links=tuple(parent_child_links),
         diagnostics=tuple(diagnostics),
+        central_family_core=central_family_core,
     )
 
 
@@ -489,7 +555,7 @@ def _partner_families(genealogy: Genealogy, person_id: str) -> list[Family]:
     )
 
 
-def _partner_role(family: Family, person_id: str) -> TreeUnionPartnerRole:
+def _partner_role(family: Family, person_id: str | None) -> TreeUnionPartnerRole:
     if person_id == family.father_id:
         return TreeUnionPartnerRole.FATHER
     if person_id == family.mother_id:

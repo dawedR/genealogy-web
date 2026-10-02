@@ -189,3 +189,125 @@ def test_layout_accepts_linked_sibling_roots_without_duplicate_pivot():
     assert len(layout.person_nodes) == len(tree.person_occurrences)
     assert [node.occurrence_id for node in layout.person_nodes].count("person:root") == 1
     assert any(node.union_occurrence_id.endswith("@S_UNION@") for node in layout.union_nodes)
+
+
+
+def central_ancestry_genealogy() -> Genealogy:
+    return Genealogy(
+        persons={
+            person_id: Person(id=person_id)
+            for person_id in (
+                "@R@", "@S@", "@RF@", "@RM@", "@SF@", "@SM@", "@C@",
+            )
+        },
+        families={
+            "@U@": Family(id="@U@", partners=["@R@", "@S@"], children=["@C@"]),
+            "@RP@": Family(id="@RP@", father_id="@RF@", mother_id="@RM@", children=["@R@"]),
+            "@SP@": Family(id="@SP@", father_id="@SF@", mother_id="@SM@", children=["@S@"]),
+        },
+    )
+
+
+def test_layout_places_one_central_union_with_both_ancestries():
+    tree = build_combined_tree(
+        central_ancestry_genealogy(),
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=1, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+    nodes = nodes_by_occurrence(layout)
+    core = tree.central_family_core
+
+    assert set(core.member_occurrence_ids) == {"person:root", core.member_occurrence_ids[1]}
+    root = nodes["person:root"]
+    spouse = nodes[core.member_occurrence_ids[1]]
+    assert root.y == spouse.y
+    assert abs((root.x + root.width / 2) - (spouse.x + spouse.width / 2)) == 192
+    assert {"@RF@", "@RM@", "@SF@", "@SM@"} <= {
+        occurrence.person_id
+        for occurrence in tree.person_occurrences
+        if occurrence.id in nodes
+    }
+
+
+def test_layout_keeps_multi_union_core_compact_despite_wide_ancestry():
+    people = {
+        person_id: Person(id=person_id)
+        for person_id in (
+            "@R@", "@S1@", "@S2@", "@RF@", "@RM@", "@A@", "@B@",
+            "@S1F@", "@S1M@", "@C@", "@D@", "@S2F@", "@S2M@", "@E@", "@F@",
+        )
+    }
+    families = {
+        "@U1@": Family(id="@U1@", partners=["@R@", "@S1@"]),
+        "@U2@": Family(id="@U2@", partners=["@R@", "@S2@"]),
+        "@RP@": Family(id="@RP@", father_id="@RF@", mother_id="@RM@", children=["@R@"]),
+        "@S1P@": Family(id="@S1P@", father_id="@S1F@", mother_id="@S1M@", children=["@S1@"]),
+        "@S2P@": Family(id="@S2P@", father_id="@S2F@", mother_id="@S2M@", children=["@S2@"]),
+        "@RFP@": Family(id="@RFP@", father_id="@A@", mother_id="@B@", children=["@RF@"]),
+        "@S1FP@": Family(id="@S1FP@", father_id="@C@", mother_id="@D@", children=["@S1F@"]),
+        "@S2FP@": Family(id="@S2FP@", father_id="@E@", mother_id="@F@", children=["@S2F@"]),
+    }
+    tree = build_combined_tree(
+        Genealogy(persons=people, families=families),
+        CombinedTreeOptions("@R@", ancestor_generations=2, descendant_generations=1, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+    nodes = nodes_by_occurrence(layout)
+    core_nodes = [nodes[item] for item in tree.central_family_core.member_occurrence_ids]
+
+    assert len(core_nodes) == 3
+    assert max(node.x + node.width / 2 for node in core_nodes) - min(
+        node.x + node.width / 2 for node in core_nodes
+    ) == 384
+    assert all(
+        not rectangles_overlap(first, second)
+        for index, first in enumerate(layout.person_nodes)
+        for second in layout.person_nodes[index + 1 :]
+    )
+
+
+def test_layout_places_three_central_unions_without_duplicate_root():
+    genealogy = Genealogy(
+        persons={person_id: Person(id=person_id) for person_id in ("@R@", "@A@", "@B@", "@C@")},
+        families={
+            "@U1@": Family(id="@U1@", partners=["@R@", "@A@"]),
+            "@U2@": Family(id="@U2@", partners=["@R@", "@B@"]),
+            "@U3@": Family(id="@U3@", partners=["@R@", "@C@"]),
+        },
+    )
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@R@", ancestor_generations=0, descendant_generations=0, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+
+    assert [node.occurrence_id for node in layout.person_nodes].count("person:root") == 1
+    assert len(layout.union_nodes) == 3
+    assert len(tree.central_family_core.member_occurrence_ids) == 4
+
+
+def test_layout_keeps_central_core_complete_at_descendant_depth_zero():
+    tree = build_combined_tree(
+        central_ancestry_genealogy(),
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=0, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+
+    assert {node.occurrence_id for node in layout.person_nodes} == {
+        occurrence.id for occurrence in tree.person_occurrences
+    }
+    assert len(layout.union_nodes) == 3
+    assert not any(
+        edge.kind is LayoutEdgeKind.PARENT_CHILD
+        and edge.union_occurrence_id in tree.central_family_core.union_occurrence_ids
+        for edge in layout.edges
+    )
+
+
+def test_multicore_layout_is_deterministic():
+    tree = build_combined_tree(
+        central_ancestry_genealogy(),
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=1, show_siblings=False),
+    )
+
+    assert layout_combined_tree(tree) == layout_combined_tree(tree)

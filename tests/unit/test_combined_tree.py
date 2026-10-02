@@ -104,7 +104,11 @@ def test_ancestor_and_descendant_depths_are_independent():
         for link in tree.parent_child_links
         if ":family:" in link.union_occurrence_id
     )
-    assert all(union.family_id != "@UNION@" for union in tree.union_occurrences)
+    assert any(union.family_id == "@UNION@" for union in tree.union_occurrences)
+    assert core_member_person_ids(tree) == ["@R@", "@S@"]
+    assert tree.central_family_core.union_occurrence_ids == (
+        "union:person:root:family:@UNION@",
+    )
 
 
 def test_depth_zero_keeps_only_root_when_there_is_no_union():
@@ -380,6 +384,24 @@ def test_descendant_depth_zero_with_siblings_contains_g0_roots_only():
     assert tree.parent_child_links == ()
 
 
+def test_descendant_depth_zero_keeps_the_complete_central_core():
+    genealogy = Genealogy(
+        persons={"@R@": Person(id="@R@"), "@S@": Person(id="@S@")},
+        families={"@U@": Family(id="@U@", partners=["@R@", "@S@"])},
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@R@", ancestor_generations=0, descendant_generations=0, show_siblings=False),
+    )
+
+    assert core_member_person_ids(tree) == ["@R@", "@S@"]
+    assert tree.central_family_core.union_occurrence_ids == (
+        "union:person:root:family:@U@",
+    )
+    assert tree.parent_child_links == ()
+
+
 def test_descendant_depth_zero_without_siblings_contains_root_only():
     tree = build_combined_tree(
         siblings_genealogy(),
@@ -647,5 +669,145 @@ def test_cycle_and_missing_reference_diagnostics_are_deterministic():
     first = build_combined_tree(genealogy, options)
     second = build_combined_tree(genealogy, options)
 
+    assert first == second
+    assert first.diagnostics == second.diagnostics
+
+
+def core_member_person_ids(tree):
+    people = occurrences_by_id(tree)
+    return [
+        people[occurrence_id].person_id
+        for occurrence_id in tree.central_family_core.member_occurrence_ids
+    ]
+
+
+def test_central_core_without_union_contains_only_the_root():
+    tree = build_combined_tree(
+        Genealogy(persons={"@R@": Person(id="@R@")} ),
+        CombinedTreeOptions("@R@", ancestor_generations=0, descendant_generations=1),
+    )
+
+    assert tree.central_family_core.root_occurrence_id == "person:root"
+    assert tree.central_family_core.member_occurrence_ids == ("person:root",)
+    assert tree.central_family_core.union_occurrence_ids == ()
+
+
+def test_central_partner_receives_own_ancestry():
+    genealogy = Genealogy(
+        persons={
+            person_id: Person(id=person_id)
+            for person_id in ("@R@", "@S@", "@RF@", "@RM@", "@SF@", "@SM@")
+        },
+        families={
+            "@U@": Family(id="@U@", partners=["@R@", "@S@"]),
+            "@RP@": Family(id="@RP@", father_id="@RF@", mother_id="@RM@", children=["@R@"]),
+            "@SP@": Family(id="@SP@", father_id="@SF@", mother_id="@SM@", children=["@S@"]),
+        },
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=1, show_siblings=False),
+    )
+
+    assert core_member_person_ids(tree) == ["@R@", "@S@"]
+    assert tree.central_family_core.union_occurrence_ids == (
+        "union:person:root:family:@U@",
+    )
+    assert {occurrence.person_id for occurrence in tree.person_occurrences} >= {
+        "@RF@", "@RM@", "@SF@", "@SM@",
+    }
+
+
+def test_central_core_keeps_three_unions_and_contextual_partners_in_order():
+    tree = build_combined_tree(
+        multiple_unions_genealogy(),
+        CombinedTreeOptions("@A@", ancestor_generations=0, descendant_generations=1, show_siblings=False),
+    )
+
+    assert core_member_person_ids(tree) == ["@A@", "@B@", "@E@", "@H@"]
+    assert tree.central_family_core.union_occurrence_ids == (
+        "union:person:root:family:@U1@",
+        "union:person:root:family:@U2@",
+        "union:person:root:family:@U3@",
+    )
+
+
+def test_unknown_and_broken_central_partners_are_members_without_ancestry():
+    unknown = Genealogy(
+        persons={"@R@": Person(id="@R@")},
+        families={"@U@": Family(id="@U@", partners=["@R@", None])},
+    )
+    broken = Genealogy(
+        persons={"@R@": Person(id="@R@")},
+        families={"@U@": Family(id="@U@", partners=["@R@", "@MISSING@"])},
+    )
+
+    unknown_tree = build_combined_tree(
+        unknown,
+        CombinedTreeOptions("@R@", ancestor_generations=2, descendant_generations=1, show_siblings=False),
+    )
+    broken_tree = build_combined_tree(
+        broken,
+        CombinedTreeOptions("@R@", ancestor_generations=2, descendant_generations=1, show_siblings=False),
+    )
+
+    assert core_member_person_ids(unknown_tree) == ["@R@", None]
+    assert len(unknown_tree.person_occurrences) == 2
+    assert core_member_person_ids(broken_tree) == ["@R@", None]
+    broken_partner = occurrences_by_id(broken_tree)[
+        broken_tree.central_family_core.member_occurrence_ids[1]
+    ]
+    assert broken_partner.missing_person_id == "@MISSING@"
+    assert [diagnostic.role for diagnostic in broken_tree.diagnostics] == [
+        TreeReferenceRole.PARTNER,
+    ]
+
+
+def test_descendant_partner_does_not_receive_central_ancestry():
+    genealogy = Genealogy(
+        persons={
+            person_id: Person(id=person_id)
+            for person_id in ("@R@", "@S@", "@C@", "@D@", "@DF@", "@DM@")
+        },
+        families={
+            "@U@": Family(id="@U@", partners=["@R@", "@S@"], children=["@C@"]),
+            "@CU@": Family(id="@CU@", partners=["@C@", "@D@"]),
+            "@DP@": Family(id="@DP@", father_id="@DF@", mother_id="@DM@", children=["@D@"]),
+        },
+    )
+
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=2, show_siblings=False),
+    )
+
+    assert "@D@" in {occurrence.person_id for occurrence in tree.person_occurrences}
+    assert "@DF@" not in {occurrence.person_id for occurrence in tree.person_occurrences}
+    assert "@DM@" not in {occurrence.person_id for occurrence in tree.person_occurrences}
+
+
+def test_central_ancestry_implex_and_diagnostics_are_deterministic():
+    genealogy = Genealogy(
+        persons={
+            person_id: Person(id=person_id)
+            for person_id in ("@R@", "@S@", "@RF@", "@SF@", "@X@")
+        },
+        families={
+            "@U@": Family(id="@U@", partners=["@R@", "@S@"]),
+            "@RP@": Family(id="@RP@", father_id="@RF@", children=["@R@"]),
+            "@SP@": Family(id="@SP@", father_id="@SF@", children=["@S@"]),
+            "@RGP@": Family(id="@RGP@", father_id="@X@", children=["@RF@"]),
+            "@SGP@": Family(id="@SGP@", father_id="@X@", children=["@SF@"]),
+        },
+    )
+    options = CombinedTreeOptions("@R@", ancestor_generations=2, descendant_generations=1, show_siblings=False)
+
+    first = build_combined_tree(genealogy, options)
+    second = build_combined_tree(genealogy, options)
+    x_occurrences = [item for item in first.person_occurrences if item.person_id == "@X@"]
+
+    assert len(x_occurrences) == 2
+    assert len({item.id for item in x_occurrences}) == 2
     assert first == second
     assert first.diagnostics == second.diagnostics
