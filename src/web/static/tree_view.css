@@ -60,3 +60,53 @@ body {
     height: auto;
     background: white;
 }
+
+.tree-view-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.65rem 1rem;
+    margin-top: 0.75rem;
+}
+
+.tree-view-toolbar label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.tree-view-toolbar input[type="number"] {
+    width: 3.5rem;
+}
+
+.tree-view-zoom-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+#tree-view-zoom {
+    min-width: 3.8rem;
+    text-align: center;
+}
+
+#tree-view-stage {
+    display: flex;
+    align-items: flex-start;
+    width: max-content;
+    min-width: 100%;
+    min-height: 100%;
+}
+
+#tree-view-container {
+    cursor: grab;
+}
+
+#tree-view-container.is-panning {
+    cursor: grabbing;
+    user-select: none;
+}
+
+#tree-view-generation-scale {
+    flex: 0 0 auto;
+}

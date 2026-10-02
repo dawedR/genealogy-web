@@ -10,18 +10,50 @@
 <body class="tree-view-page">
     <header class="tree-view-header">
         <h1 id="tree-view-title">Arbre familial</h1>
+        <div class="tree-view-toolbar" aria-label="Contrôles de l’arbre">
+            <label for="tree-view-ancestor-generations">
+                Ascendance
+                <input id="tree-view-ancestor-generations" type="number" min="0" max="10">
+            </label>
+            <label for="tree-view-descendant-generations">
+                Descendance
+                <input id="tree-view-descendant-generations" type="number" min="0" max="10">
+            </label>
+            <label class="tree-generation-scale-control">
+                <input id="tree-view-show-generation-scale" type="checkbox">
+                Échelle des générations
+            </label>
+            <div class="tree-view-zoom-controls" aria-label="Zoom">
+                <button id="tree-view-zoom-out" type="button" aria-label="Réduire">−</button>
+                <output id="tree-view-zoom">100 %</output>
+                <button id="tree-view-zoom-in" type="button" aria-label="Agrandir">+</button>
+                <button id="tree-view-fit" type="button">Ajuster à l’écran</button>
+                <button id="tree-view-actual-size" type="button">Taille réelle</button>
+            </div>
+        </div>
         <p id="tree-view-status" class="status">Chargement de l’arbre familial…</p>
         <p id="tree-view-diagnostics" hidden></p>
     </header>
     <main id="tree-view-container">
-        <svg
-            id="tree-view-chart"
-            viewBox="0 0 1 1"
-            role="img"
-            aria-label="Arbre familial"
-        ></svg>
+        <div id="tree-view-stage">
+            <svg
+                id="tree-view-generation-scale"
+                class="tree-generation-scale"
+                viewBox="0 0 1 1"
+                aria-hidden="true"
+                hidden
+            ></svg>
+            <svg
+                id="tree-view-chart"
+                viewBox="0 0 1 1"
+                role="img"
+                aria-label="Arbre familial"
+            ></svg>
+        </div>
     </main>
     <script src="/static/tree_renderer.js"></script>
+    <script src="/static/viewport_navigation.js"></script>
+    <script src="/static/tree_viewport.js"></script>
     <script src="/static/tree_view.js"></script>
 </body>
 </html>

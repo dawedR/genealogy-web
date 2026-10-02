@@ -254,6 +254,10 @@
             </button>
         </div>
 
+            <button id="open-fan-view" type="button" disabled>
+                Ouvrir l’éventail en plein écran
+            </button>
+
         <fieldset class="fan-label-options">
             <legend>Contenu des secteurs</legend>
 
@@ -276,6 +280,7 @@
             </label>
 
             <label>
+
                 <input
                     id="fan-label-birth"
                     type="checkbox"
@@ -357,6 +362,11 @@
                 value="2"
             >
 
+            <label class="tree-generation-scale-control">
+                <input id="tree-show-generation-scale" type="checkbox">
+                Afficher l’échelle des générations
+            </label>
+
             <button id="open-tree-view" type="button" disabled>
                 Ouvrir l’arbre en plein écran
             </button>
@@ -365,21 +375,30 @@
         <p id="tree-status" class="status">
             Sélectionnez une personne pour afficher l’arbre.
         </p>
-
         <div id="tree-container">
-            <svg
-                id="tree-chart"
-                viewBox="0 0 1 1"
-                role="img"
-                aria-label="Arbre familial"
-            ></svg>
+            <div id="tree-stage">
+                <svg
+                    id="tree-generation-scale"
+                    class="tree-generation-scale"
+                    viewBox="0 0 1 1"
+                    aria-hidden="true"
+                    hidden
+                ></svg>
+                <svg
+                    id="tree-chart"
+                    viewBox="0 0 1 1"
+                    role="img"
+                    aria-label="Arbre familial"
+                ></svg>
+            </div>
         </div>
-
         <p id="tree-diagnostics" hidden></p>
     </section>
 </main>
 
+<script src="/static/fan_renderer.js"></script>
 <script src="/static/tree_renderer.js"></script>
+<script src="/static/tree_viewport.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

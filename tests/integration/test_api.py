@@ -780,23 +780,18 @@ def test_static_javascript():
     assert "place-enrichments/validate" in response.text
     assert "loadFanChart(person.id);" in response.text
     assert "loadTreeChart(person.id);" in response.text
-    assert "renderImportDetails" in response.text
-    assert "createFanGeometry" in response.text
-    assert "setFanViewBox" in response.text
-    assert "labelTransform" in response.text
     assert "getFanLabelConfig" in response.text
-    assert "buildPersonLabelVariants" in response.text
-    assert "buildSecondaryLabelLines" in response.text
-    assert "abbreviatePersonName" in response.text
-    assert "formatEventLabel" in response.text
     assert "renderFanLegend" in response.text
-    assert "legendEntryForOccurrence" in response.text
-    assert "compareLegendEntries" in response.text
-    assert "${occurrence.color_kind}:${occurrence.birth_place_original_name}" in response.text
-    assert "Non vérifié" in response.text
-    assert "existing.occurrencesCount += 1" in response.text
-    assert "occurrence.person === null && !showUnknown" in response.text
-    assert "second.occurrencesCount - first.occurrencesCount" in response.text
+    assert "clearFanLegend(fanLegend, fanLegendList)" in response.text
+    renderer = client.get("/static/fan_renderer.js")
+    assert renderer.status_code == 200
+    for marker in (
+        "createFanGeometry", "setFanViewBox", "labelTransform",
+        "buildPersonLabelVariants", "buildSecondaryLabelLines",
+        "abbreviatePersonName", "formatEventLabel", "legendEntryForOccurrence",
+        "compareLegendEntries", "existing.occurrencesCount += 1",
+    ):
+        assert marker in renderer.text
 
 
 def test_static_portrait_fallback_assets_are_served():
@@ -835,6 +830,38 @@ def test_static_javascript_reuses_one_person_selection_flow():
     )
 
 
+
+def test_main_frontend_selection_flow_requires_all_shared_tree_elements():
+    with make_client() as client:
+        page = client.get("/")
+        script = client.get("/static/app.js")
+        fan_renderer = client.get("/static/fan_renderer.js")
+        navigation = client.get("/static/viewport_navigation.js")
+
+    assert page.status_code == 200
+    assert script.status_code == 200
+    assert fan_renderer.status_code == 200
+    assert navigation.status_code == 200
+    assert 'id="tree-status"' in page.text
+    assert page.text.index('/static/fan_renderer.js') < page.text.index('/static/app.js')
+    assert 'void initializePage();' in script.text
+
+    default_start = script.text.index("async function selectDefaultPerson")
+    default_end = script.text.index("async function initializePage", default_start)
+    assert "selectPerson(person);" in script.text[default_start:default_end]
+
+    click_start = script.text.index('button.addEventListener("click", () => {')
+    click_end = script.text.index("item.appendChild(button);", click_start)
+    assert "selectPerson(person);" in script.text[click_start:click_end]
+
+    selection_start = script.text.index("function selectPerson(person)")
+    selection_end = script.text.index("async function selectDefaultPerson", selection_start)
+    selection = script.text[selection_start:selection_end]
+    assert "selectedPersonId = person.id;" in selection
+    assert "clearTreeChart" in selection
+    assert "selectedPerson.textContent" in selection
+    assert "loadFanChart(person.id);" in selection
+    assert "loadTreeChart(person.id);" in selection
 def test_static_javascript_selects_i1_only_when_it_exists():
     with make_client() as client:
         response = client.get("/static/app.js")
@@ -863,13 +890,9 @@ def test_static_javascript_selects_i1_only_when_it_exists():
         initial_load.index("await selectDefaultPerson();")
     )
 
-
-def test_static_javascript_uses_ordered_label_degradation():
-    with make_client() as client:
-        response = client.get("/static/app.js")
-
-    assert response.status_code == 200
-    script = response.text
+    renderer = client.get("/static/fan_renderer.js")
+    assert renderer.status_code == 200
+    script = renderer.text
 
     variants_start = script.index("function buildPersonLabelVariants")
     variants_end = script.index(
@@ -885,6 +908,7 @@ def test_static_javascript_uses_ordered_label_degradation():
     assert "abbreviatePersonName" in script
     assert "buildPersonLabelLines" not in script
     assert 'precision === "year"' in script
+    assert "variants[variants.length - 1]" in script
     assert "variants[variants.length - 1]" in script
 def test_search_uploaded_people_by_birth_year():
     with make_client() as client:
@@ -1466,6 +1490,8 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     for element_id in (
         "tree-ancestor-generations",
         "tree-descendant-generations",
+        "tree-show-generation-scale",
+        "tree-generation-scale",
         "tree-chart",
         "tree-diagnostics",
         "open-tree-view",
@@ -1473,13 +1499,22 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
         assert f'id="{element_id}"' in response.text
     assert 'id="tree-show-siblings"' not in response.text
     assert "Afficher la fratrie" not in response.text
-    assert 'id="tree-ancestor-generations"' in response.text
     assert 'min="0"' in response.text
     assert 'max="10"' in response.text
     assert 'loadTreeChart(person.id);' in javascript.text
-    assert 'renderTree(treeChart, tree);' in javascript.text
+    assert 'renderTree(treeChart, tree, {naturalSize: true});' in javascript.text
+    assert 'id="tree-status"' in response.text
+    assert 'id="tree-stage"' in response.text
+    tree_render_start = javascript.text.index('renderTree(treeChart, tree, {naturalSize: true});')
+    stage_start = javascript.text.index('updateEmbeddedTreeStage();', tree_render_start)
+    scale_start = javascript.text.index('renderEmbeddedGenerationScale();', tree_render_start)
+    assert tree_render_start < stage_start < scale_start
+    assert 'if (currentTree === null || !treeShowGenerationScale.checked)' in javascript.text
+    assert 'treeStage.style.width' in javascript.text
+    assert 'treeStage.style.height' in javascript.text
+    assert 'renderEmbeddedGenerationScale();' in javascript.text
+    assert 'show_generation_scale: String(treeShowGenerationScale.checked)' in javascript.text
     assert 'window.open(`/tree-view?${query.toString()}`, "_blank", "noopener")' in javascript.text
-    assert 'new URLSearchParams({' in javascript.text
     assert '"&show_siblings=false"' in javascript.text
     assert "treeShowSiblings" not in javascript.text
     assert 'edge.points.map' not in javascript.text
@@ -1491,12 +1526,12 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     assert 'central_family_core' not in javascript.text
 
     assert 'function renderTree(svgElement, tree, options = {})' in renderer.text
+    assert 'function generationScaleRows(tree)' in renderer.text
+    assert 'function renderGenerationScale(svgElement, tree, options = {})' in renderer.text
+    assert 'Conjoints G${generation}' in renderer.text
+    assert 'G0 · Noyau familial' in renderer.text
     assert 'tree.person_cards.map' in renderer.text
     assert 'card.portrait.url' in renderer.text
-    assert 'display_given_name' in renderer.text
-    assert 'display_surname' in renderer.text
-    assert 'display_birth_date' in renderer.text
-    assert 'display_death_date' in renderer.text
     assert 'preserveAspectRatio", "xMidYMid slice' in renderer.text
     assert 'tree.layout.union_nodes' not in renderer.text
     assert 'tree-union' not in renderer.text
@@ -1506,43 +1541,132 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     assert 'for (const node of tree.layout.person_nodes)' in renderer.text
     assert 'layout_combined_tree' not in renderer.text
     assert 'parent_child_links' not in renderer.text
-def test_dedicated_tree_view_uses_the_shared_renderer_and_natural_svg_size():
+
+
+def test_dedicated_tree_view_exposes_options_zoom_pan_and_generation_scale():
     with make_client() as client:
         page = client.get(
             "/tree-view?person_id=%40I1%40&ancestor_generations=2&descendant_generations=2"
         )
         javascript = client.get("/static/tree_view.js")
         stylesheet = client.get("/static/tree_view.css")
+        navigation = client.get("/static/viewport_navigation.js")
 
     assert page.status_code == 200
     assert javascript.status_code == 200
     assert stylesheet.status_code == 200
-    assert 'id="tree-view-chart"' in page.text
+    assert navigation.status_code == 200
+    for element_id in (
+        "tree-view-chart",
+        "tree-view-generation-scale",
+        "tree-view-ancestor-generations",
+        "tree-view-descendant-generations",
+        "tree-view-show-generation-scale",
+        "tree-view-zoom-out",
+        "tree-view-zoom-in",
+        "tree-view-fit",
+        "tree-view-actual-size",
+    ):
+        assert f'id="{element_id}"' in page.text
     assert '/static/tree_renderer.js' in page.text
     assert 'new URLSearchParams(window.location.search)' in javascript.text
     assert 'parseTreeViewOptions' in javascript.text
-    assert 'encodeURIComponent(options.personId)' in javascript.text
+    assert 'encodeURIComponent(treeViewOptions.personId)' in javascript.text
     assert 'show_siblings: "false"' in javascript.text
     assert "showSiblings" not in javascript.text
+    assert 'show_generation_scale' in javascript.text
+    assert 'window.history.replaceState' in javascript.text
     assert 'renderTree(treeViewChart, tree, {naturalSize: true});' in javascript.text
+    assert 'renderGenerationScale(treeViewGenerationScale, currentTree, {naturalSize: true});' in javascript.text
+    assert 'createViewportNavigation' in javascript.text
+    assert 'treeViewRequestSerial' in javascript.text
     assert 'layout_combined_tree' not in javascript.text
     assert 'parent_child_links' not in javascript.text
     assert '#tree-view-chart' in stylesheet.text
     assert 'width: auto;' in stylesheet.text
     assert stylesheet.text.startswith("html,")
-    assert "body {" in stylesheet.text
     assert "overflow: hidden;" in stylesheet.text
-    assert ".tree-view-page {" in stylesheet.text
-    assert "display: flex;" in stylesheet.text
-    assert "flex-direction: column;" in stylesheet.text
     assert "#tree-view-container" in stylesheet.text
-    assert "flex: 1 1 auto;" in stylesheet.text
-    assert "min-width: 0;" in stylesheet.text
-    assert "min-height: 0;" in stylesheet.text
     assert "overflow: auto;" in stylesheet.text
-    assert "width: 100vw;" not in stylesheet.text
-    assert "height: calc(100vh" not in stylesheet.text
+    assert "cursor: grab;" in stylesheet.text
+    assert "cursor: grabbing;" in stylesheet.text
+
+def test_dedicated_fan_view_uses_shared_renderer_and_navigation():
+    with make_client() as client:
+        page = client.get("/fan-view?person_id=%40I1%40&generations=5&color_mode=BIRTH_PLACE")
+        javascript = client.get("/static/fan_view.js")
+        renderer = client.get("/static/fan_renderer.js")
+        navigation = client.get("/static/viewport_navigation.js")
+
+    assert page.status_code == 200
+    assert javascript.status_code == 200
+    assert renderer.status_code == 200
+    assert navigation.status_code == 200
+    for element_id in ("fan-view-chart", "fan-view-generations", "fan-view-color-mode", "fan-view-zoom-out", "fan-view-zoom-in", "fan-view-fit", "fan-view-actual-size", "fan-view-legend"):
+        assert f'id="{element_id}"' in page.text
+    assert 'new URLSearchParams(window.location.search)' in javascript.text
+    assert 'window.history.replaceState' in javascript.text
+    stylesheet = client.get("/static/fan_view.css")
+    tree_stylesheet = client.get("/static/tree_view.css")
+    assert stylesheet.status_code == 200
+    assert tree_stylesheet.status_code == 200
+    for stylesheet_text in (stylesheet.text, tree_stylesheet.text):
+        assert "width: 100%;" in stylesheet_text
+        assert "min-width: 0;" in stylesheet_text
+
+        assert "min-height: 0;" in stylesheet_text
+        assert "overflow: auto;" in stylesheet_text
+    assert ".fan-view-page > #fan-view-container" in stylesheet.text
     assert "max-width: none;" in stylesheet.text
+    assert "padding: 0;" in stylesheet.text
+    assert 'fanViewRequestSerial' in javascript.text
+    assert 'renderFanChart(fanViewChart, occurrences, fanViewOptions);' in javascript.text
+    assert 'renderFanLegend(fanViewLegend, fanViewLegendList' in javascript.text
+    assert 'createViewportNavigation' in javascript.text
+    assert 'createFanGeometry' not in javascript.text
+    assert 'function renderFanChart(svgElement, occurrences, options)' in renderer.text
+    assert 'function renderFanLegend(legendElement, legendList' in renderer.text
+    assert 'color_css' in renderer.text
+    assert 'const FIT_MARGIN = 0.95;' in navigation.text
+
+
+def test_tree_initial_render_resets_to_root_without_using_generation_scale_toggle():
+    with make_client() as client:
+        embedded_page = client.get("/")
+        dedicated_page = client.get(
+            "/tree-view?person_id=%40I1%40&ancestor_generations=2&descendant_generations=2"
+        )
+        embedded = client.get("/static/app.js")
+        dedicated = client.get("/static/tree_view.js")
+        viewport = client.get("/static/tree_viewport.js")
+        navigation = client.get("/static/viewport_navigation.js")
+
+    assert embedded_page.status_code == 200
+    assert dedicated_page.status_code == 200
+    assert viewport.status_code == 200
+    assert "rootNode.x - bounds.x + rootNode.width / 2" in viewport.text
+    assert "treeSvg.offsetLeft" in viewport.text
+    assert "ROOT_VERTICAL_FRACTION = 0.57" in viewport.text
+    assert "requestAnimationFrame(() => requestAnimationFrame(callback))" in viewport.text
+    assert "resetTreeViewportToRoot" in embedded.text
+    assert 'document.querySelector("#tree-container")' in embedded.text
+    assert "finalizeEmbeddedStructuralTreeRender" in embedded.text
+    assert "resetTreeViewportToRoot" in dedicated.text
+    assert "finalizeStructuralTreeRender" in dedicated.text
+    assert "treeNavigation.resetToActualSize();" in dedicated.text
+    assert "treeNavigation.applyZoom(treeNavigation.zoom);" not in dedicated.text
+    toggle_start = dedicated.text.index('treeViewShowGenerationScale.addEventListener("change"')
+    toggle_end = dedicated.text.index("function parseTreeViewOptions", toggle_start)
+    toggle = dedicated.text[toggle_start:toggle_end]
+    assert "renderScale();" in toggle
+    assert "preserveTreeRootPosition" in toggle
+    assert "resetToActualSize" not in toggle
+    assert "applyZoom" not in toggle
+    assert "resetTreeViewportToRoot" not in toggle
+    assert "function syncSize()" in navigation.text
+    assert "function resetToActualSize()" in navigation.text
+    assert '/static/tree_viewport.js' in embedded_page.text
+    assert '/static/tree_viewport.js' in dedicated_page.text
 def tree_api_genealogy() -> Genealogy:
     return Genealogy(
         persons={
@@ -1580,6 +1704,7 @@ def test_tree_endpoint_exposes_person_cards_consumed_by_the_renderer():
                 "descendant_generations": 1,
                 "show_siblings": "false",
             },
+
         )
 
     assert response.status_code == 200

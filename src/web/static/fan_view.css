@@ -1,0 +1,21 @@
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+.fan-view-page { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: #f5f5f5; }
+.fan-view-header { box-sizing: border-box; width: 100%; padding: 1rem 1.5rem; border-bottom: 1px solid #ddd; background: white; }
+.fan-view-header h1 { margin: 0; font-size: 1.25rem; }
+.fan-view-toolbar, .fan-view-zoom-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem; margin-top: .75rem; }
+.fan-view-toolbar label { display: inline-flex; align-items: center; gap: .35rem; }
+#fan-view-zoom { min-width: 3.8rem; text-align: center; }
+#fan-view-container { box-sizing: border-box; flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; overflow: auto; background: #fafafa; cursor: grab; }
+#fan-view-container.is-panning { cursor: grabbing; user-select: none; }
+#fan-view-stage { display: block; width: max-content; min-width: 100%; min-height: 100%; }
+#fan-view-chart { display: block; width: auto; height: auto; background: white; }
+#fan-view-legend { margin-top: .75rem; max-width: 38rem; }
+#fan-view-legend h2 { font-size: 1rem; margin: 0 0 .35rem; }
+#fan-view-legend-list { margin: 0; }
+
+.fan-view-page > #fan-view-container {
+    align-self: stretch;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+}

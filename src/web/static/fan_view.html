@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Éventail d’ascendance — Genealogy Web</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/tree_view.css">
+    <link rel="stylesheet" href="/static/fan_view.css">
+</head>
+<body class="fan-view-page">
+    <header class="fan-view-header">
+        <h1 id="fan-view-title">Éventail d’ascendance</h1>
+        <div class="fan-view-toolbar" aria-label="Contrôles de l’éventail">
+            <label>Générations <input id="fan-view-generations" type="number" min="1" max="10"></label>
+            <label>Couleur <select id="fan-view-color-mode"><option value="NONE">Monochrome</option><option value="BIRTH_PLACE">Lieu de naissance</option></select></label>
+            <div class="fan-view-zoom-controls"><button id="fan-view-zoom-out" type="button">−</button><output id="fan-view-zoom">100 %</output><button id="fan-view-zoom-in" type="button">+</button><button id="fan-view-fit" type="button">Ajuster à l’écran</button><button id="fan-view-actual-size" type="button">Taille réelle</button></div>
+        </div>
+        <p id="fan-view-status" class="status">Chargement de l’éventail…</p>
+        <aside id="fan-view-legend" aria-label="Légende géographique" hidden><h2>Légende géographique</h2><ul id="fan-view-legend-list"></ul></aside>
+    </header>
+    <main id="fan-view-container">
+        <div id="fan-view-stage"><svg id="fan-view-chart" viewBox="-1 -1 2 2" role="img" aria-label="Éventail d’ascendance"></svg></div>
+    </main>
+    <script src="/static/fan_renderer.js"></script>
+    <script src="/static/viewport_navigation.js"></script>
+    <script src="/static/fan_view.js"></script>
+</body>
+</html>

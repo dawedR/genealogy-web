@@ -305,6 +305,13 @@ def create_app(
             raise HTTPException(status_code=404, detail="Portrait not found")
         return FileResponse(portrait.path, media_type=portrait.media_type)
 
+
+    @app.get(
+        "/fan-view",
+        include_in_schema=False,
+    )
+    def fan_view() -> FileResponse:
+        return FileResponse(web_root / "fan_view.html")
     @app.get(
         "/",
         include_in_schema=False,

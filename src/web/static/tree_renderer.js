@@ -1,6 +1,7 @@
 /* Passive SVG renderer shared by the embedded and dedicated tree views. */
 
 (function () {
+    const generationScaleWidth = 176;
     function renderTree(svgElement, tree, options = {}) {
         const svgNS = "http://www.w3.org/2000/svg";
         const {bounds} = tree.layout;
@@ -96,5 +97,109 @@
         return lines.length > 0 ? lines : ["?"];
     }
 
+
+    function generationScaleRows(tree) {
+        const occurrencesById = new Map(
+            tree.person_occurrences.map(occurrence => [occurrence.id, occurrence]),
+        );
+        const rowsByGeneration = new Map();
+
+        for (const node of tree.layout.person_nodes) {
+            const occurrence = occurrencesById.get(node.occurrence_id);
+            if (occurrence === undefined) {
+                continue;
+            }
+            const nodes = rowsByGeneration.get(occurrence.generation) || [];
+            nodes.push(node);
+            rowsByGeneration.set(occurrence.generation, nodes);
+        }
+
+        const rows = [];
+        for (const generation of [...rowsByGeneration.keys()].sort((left, right) => left - right)) {
+            const yRows = new Map();
+            for (const node of rowsByGeneration.get(generation)) {
+                const nodes = yRows.get(node.y) || [];
+                nodes.push(node);
+                yRows.set(node.y, nodes);
+            }
+            const positions = [...yRows.entries()].sort(([left], [right]) => left - right);
+            const [mainY, mainNodes] = positions[0];
+            rows.push({
+                generation,
+                kind: "main",
+                label: generation < 0
+                    ? `G${generation} · Ascendance`
+                    : generation === 0
+                        ? "G0 · Noyau familial"
+                        : `G${generation} · Descendance`,
+                y: mainY + mainNodes[0].height / 2,
+            });
+            if (generation > 0) {
+                for (const [y, nodes] of positions.slice(1)) {
+                    rows.push({
+                        generation,
+                        kind: "spouses",
+                        label: `Conjoints G${generation}`,
+                        y: y + nodes[0].height / 2,
+                    });
+                }
+            }
+        }
+        return rows;
+    }
+
+    function renderGenerationScale(svgElement, tree, options = {}) {
+        const svgNS = "http://www.w3.org/2000/svg";
+        const {bounds} = tree.layout;
+        const rows = generationScaleRows(tree);
+        const axisX = 18;
+        const tickEndX = 34;
+
+        svgElement.innerHTML = "";
+        svgElement.setAttribute(
+            "viewBox",
+            `0 ${bounds.y} ${generationScaleWidth} ${bounds.height}`,
+        );
+        if (options.naturalSize) {
+            svgElement.setAttribute("width", generationScaleWidth);
+            svgElement.setAttribute("height", tree.layout.height);
+        } else {
+            svgElement.removeAttribute("width");
+            svgElement.removeAttribute("height");
+        }
+
+        const axis = document.createElementNS(svgNS, "line");
+        axis.setAttribute("x1", axisX);
+        axis.setAttribute("x2", axisX);
+        axis.setAttribute("y1", bounds.y);
+        axis.setAttribute("y2", bounds.y + bounds.height);
+        axis.setAttribute("class", "tree-generation-scale-axis");
+        svgElement.appendChild(axis);
+
+        for (const row of rows) {
+            const tick = document.createElementNS(svgNS, "line");
+            tick.setAttribute("x1", axisX);
+            tick.setAttribute("x2", tickEndX);
+            tick.setAttribute("y1", row.y);
+            tick.setAttribute("y2", row.y);
+            tick.setAttribute("class", "tree-generation-scale-tick");
+            svgElement.appendChild(tick);
+
+            const label = document.createElementNS(svgNS, "text");
+            label.setAttribute("x", tickEndX + 8);
+            label.setAttribute("y", row.y + 4);
+            label.setAttribute(
+                "class",
+                row.kind === "spouses"
+                    ? "tree-generation-scale-label tree-generation-scale-spouses"
+                    : "tree-generation-scale-label",
+            );
+            label.textContent = row.label;
+            svgElement.appendChild(label);
+        }
+        return rows;
+    }
     window.renderTree = renderTree;
+    window.renderGenerationScale = renderGenerationScale;
+    window.generationScaleWidth = generationScaleWidth;
 })();
