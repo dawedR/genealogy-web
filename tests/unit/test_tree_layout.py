@@ -1,6 +1,12 @@
 from src.domain.models import Family, Genealogy, Person
 from src.services.combined_tree import CombinedTreeOptions, build_combined_tree
-from src.services.tree_layout import LayoutEdgeKind, layout_combined_tree
+from src.services.tree_layout import (
+    LayoutBounds,
+    LayoutEdgeKind,
+    PersonLayoutNode,
+    UnionLayoutNode,
+    layout_combined_tree,
+)
 
 
 def genealogy_with_ancestry_and_descendance() -> Genealogy:
@@ -311,3 +317,158 @@ def test_multicore_layout_is_deterministic():
     )
 
     assert layout_combined_tree(tree) == layout_combined_tree(tree)
+
+
+
+def three_union_genealogy() -> Genealogy:
+    return Genealogy(
+        persons={
+            person_id: Person(id=person_id)
+            for person_id in ("@A@", "@B@", "@E@", "@H@", "@C@", "@D@", "@F@")
+        },
+        families={
+            "@U1@": Family(id="@U1@", partners=["@A@", "@B@"], children=["@C@"]),
+            "@U2@": Family(id="@U2@", partners=["@A@", "@E@"], children=["@D@"]),
+            "@U3@": Family(id="@U3@", partners=["@A@", "@H@"], children=["@F@"]),
+        },
+    )
+
+
+def assert_edges_are_orthogonal_and_avoid_cards(layout):
+    for edge in layout.edges:
+        assert len(edge.points) >= 2
+        for start, end in zip(edge.points, edge.points[1:]):
+            assert start.x == end.x or start.y == end.y, edge
+            for card in layout.person_nodes:
+                if start.x == end.x:
+                    crosses_interior = (
+                        card.x < start.x < card.x + card.width
+                        and max(min(start.y, end.y), card.y)
+                        < min(max(start.y, end.y), card.y + card.height)
+                    )
+                else:
+                    crosses_interior = (
+                        card.y < start.y < card.y + card.height
+                        and max(min(start.x, end.x), card.x)
+                        < min(max(start.x, end.x), card.x + card.width)
+                    )
+                assert not crosses_interior, (edge, card)
+
+
+def test_routing_does_not_change_simple_fixture_placements():
+    _, layout = make_layout(genealogy_with_ancestry_and_descendance())
+
+    assert layout.person_nodes == (
+        PersonLayoutNode("person:root", 40.0, 184.0, 160.0, 72.0),
+        PersonLayoutNode("person:union:person:root:family:@U@:partner:1", 232.0, 184.0, 160.0, 72.0),
+        PersonLayoutNode("person:union:person:root:parents:@P@:father", 40.0, 40.0, 160.0, 72.0),
+        PersonLayoutNode("person:union:person:root:parents:@P@:mother", 232.0, 40.0, 160.0, 72.0),
+        PersonLayoutNode("person:union:person:root:family:@U@:child:0", 40.0, 328.0, 160.0, 72.0),
+        PersonLayoutNode("person:union:person:root:family:@U@:child:1", 232.0, 328.0, 160.0, 72.0),
+    )
+    assert layout.union_nodes == (
+        UnionLayoutNode("union:person:root:family:@U@", 216.0, 292.0),
+        UnionLayoutNode("union:person:root:parents:@P@", 216.0, 148.0),
+    )
+    assert (layout.width, layout.height, layout.bounds) == (
+        432.0,
+        440.0,
+        LayoutBounds(0.0, 0.0, 432.0, 440.0),
+    )
+
+
+def test_routing_keeps_multicore_centers_and_bounds():
+    tree = build_combined_tree(
+        central_ancestry_genealogy(),
+        CombinedTreeOptions("@R@", ancestor_generations=1, descendant_generations=1, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+    nodes = nodes_by_occurrence(layout)
+    unions = unions_by_occurrence(layout)
+
+    assert (nodes["person:root"].x, nodes["person:root"].y) == (240.0, 184.0)
+    spouse_id = tree.central_family_core.member_occurrence_ids[1]
+    assert (nodes[spouse_id].x, nodes[spouse_id].y) == (432.0, 184.0)
+    assert (unions[tree.central_family_core.union_occurrence_ids[0]].x,
+            unions[tree.central_family_core.union_occurrence_ids[0]].y) == (416.0, 292.0)
+    assert (layout.width, layout.height, layout.bounds) == (
+        832.0,
+        440.0,
+        LayoutBounds(0.0, 0.0, 832.0, 440.0),
+    )
+
+
+def test_all_routes_are_orthogonal_and_clear_of_cards():
+    simple = make_layout(genealogy_with_ancestry_and_descendance())[1]
+    multicore = layout_combined_tree(build_combined_tree(
+        central_ancestry_genealogy(),
+        CombinedTreeOptions("@R@", 1, 1, show_siblings=False),
+    ))
+    three_unions = make_layout(three_union_genealogy(), root="@A@", ancestors=0, descendants=1)[1]
+
+    for layout in (simple, multicore, three_unions):
+        assert_edges_are_orthogonal_and_avoid_cards(layout)
+
+
+def test_siblings_of_one_union_share_the_same_bus():
+    _, layout = make_layout(genealogy_with_ancestry_and_descendance())
+    union_id = "union:person:root:family:@U@"
+    edges = [
+        edge for edge in layout.edges
+        if edge.kind is LayoutEdgeKind.PARENT_CHILD
+        and edge.union_occurrence_id == union_id
+    ]
+    union = unions_by_occurrence(layout)[union_id]
+    children = nodes_by_occurrence(layout)
+
+    assert len(edges) == 2
+    assert len({edge.points[1].y for edge in edges}) == 1
+    bus_y = edges[0].points[1].y
+    assert union.y < bus_y < min(children[edge.person_occurrence_id].y for edge in edges)
+    assert all(edge.points[0].x == union.x for edge in edges)
+    assert all(edge.points[-1].x == children[edge.person_occurrence_id].x
+               + children[edge.person_occurrence_id].width / 2 for edge in edges)
+
+
+def test_single_offset_child_uses_an_orthogonal_dogleg():
+    _, layout = make_layout(genealogy_with_ancestry_and_descendance())
+    edge = next(
+        edge for edge in layout.edges
+        if edge.kind is LayoutEdgeKind.PARENT_CHILD
+        and edge.union_occurrence_id == "union:person:root:parents:@P@"
+    )
+    union = unions_by_occurrence(layout)[edge.union_occurrence_id]
+    child = nodes_by_occurrence(layout)[edge.person_occurrence_id]
+
+    assert len(edge.points) == 4
+    assert edge.points[0].x == edge.points[1].x == union.x
+    assert edge.points[1].y == edge.points[2].y
+    assert edge.points[2].x == edge.points[3].x == child.x + child.width / 2
+    assert_edges_are_orthogonal_and_avoid_cards(layout)
+
+
+def test_single_aligned_child_uses_only_a_vertical():
+    genealogy = Genealogy(
+        persons={"@A@": Person(id="@A@"), "@C@": Person(id="@C@")},
+        families={"@U@": Family(id="@U@", partners=["@A@"], children=["@C@"])},
+    )
+    _, layout = make_layout(genealogy, root="@A@", ancestors=0, descendants=1)
+    edge = next(edge for edge in layout.edges if edge.kind is LayoutEdgeKind.PARENT_CHILD)
+
+    assert len(edge.points) == 2
+    assert edge.points[0].x == edge.points[1].x
+    assert_edges_are_orthogonal_and_avoid_cards(layout)
+
+
+def test_multiple_unions_use_distinct_partner_tracks():
+    tree, layout = make_layout(three_union_genealogy(), root="@A@", ancestors=0, descendants=1)
+    root_edges = [
+        edge for edge in layout.edges
+        if edge.kind is LayoutEdgeKind.PARTNER
+        and edge.person_occurrence_id == tree.root_occurrence_id
+    ]
+
+    assert len(root_edges) == 3
+    assert len({edge.points[1].y for edge in root_edges}) == 3
+    assert len({edge.union_occurrence_id for edge in root_edges}) == 3
+    assert_edges_are_orthogonal_and_avoid_cards(layout)

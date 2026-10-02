@@ -403,34 +403,86 @@ def layout_combined_tree(
     )
     union_nodes_by_id = {node.union_occurrence_id: node for node in union_nodes}
 
+    # Reserve a deterministic track in the free band below a person's card
+    # when that occurrence participates in several unions. Every partner of
+    # one union uses the same track; a distant union's horizontal run can then
+    # pass above the other union nodes without touching a card.
+    unions_by_partner: dict[str, list[str]] = {}
+    for union in tree.union_occurrences:
+        for partner in union.partners:
+            unions_by_partner.setdefault(partner.occurrence_id, []).append(union.id)
+
     edges: list[LayoutEdge] = []
     for union in tree.union_occurrences:
         union_node = union_nodes_by_id[union.id]
+        shared_partner = max(
+            union.partners,
+            key=lambda partner: len(unions_by_partner[partner.occurrence_id]),
+        )
+        shared_unions = unions_by_partner[shared_partner.occurrence_id]
+        track_index = shared_unions.index(union.id) + 1
+        track_count = len(shared_unions) + 1
         for partner in union.partners:
             person_node = person_nodes_by_id[partner.occurrence_id]
+            person_center_x = person_node.x + person_node.width / 2
+            person_bottom_y = person_node.y + person_node.height
+            if person_center_x == union_node.x:
+                points = (
+                    LayoutPoint(person_center_x, person_bottom_y),
+                    LayoutPoint(union_node.x, union_node.y),
+                )
+            else:
+                track_y = person_bottom_y + (
+                    union_node.y - person_bottom_y
+                ) * track_index / track_count
+                points = (
+                    LayoutPoint(person_center_x, person_bottom_y),
+                    LayoutPoint(person_center_x, track_y),
+                    LayoutPoint(union_node.x, track_y),
+                    LayoutPoint(union_node.x, union_node.y),
+                )
             edges.append(
                 LayoutEdge(
                     kind=LayoutEdgeKind.PARTNER,
                     union_occurrence_id=union.id,
                     person_occurrence_id=partner.occurrence_id,
-                    points=(
-                        LayoutPoint(person_node.x + person_node.width / 2, person_node.y + person_node.height),
-                        LayoutPoint(union_node.x, union_node.y),
-                    ),
+                    points=points,
                 )
             )
-        for child_id in children_by_union.get(union.id, []):
+
+        child_ids = children_by_union.get(union.id, [])
+        if child_ids:
+            bus_y = (
+                union_node.y
+                + min(person_nodes_by_id[child_id].y for child_id in child_ids)
+            ) / 2
+        for child_id in child_ids:
             child_node = person_nodes_by_id[child_id]
+            child_center_x = child_node.x + child_node.width / 2
+            if child_center_x == union_node.x and len(child_ids) == 1:
+                points = (
+                    LayoutPoint(union_node.x, union_node.y),
+                    LayoutPoint(child_center_x, child_node.y),
+                )
+            elif child_center_x == union_node.x:
+                points = (
+                    LayoutPoint(union_node.x, union_node.y),
+                    LayoutPoint(union_node.x, bus_y),
+                    LayoutPoint(child_center_x, child_node.y),
+                )
+            else:
+                points = (
+                    LayoutPoint(union_node.x, union_node.y),
+                    LayoutPoint(union_node.x, bus_y),
+                    LayoutPoint(child_center_x, bus_y),
+                    LayoutPoint(child_center_x, child_node.y),
+                )
             edges.append(
                 LayoutEdge(
                     kind=LayoutEdgeKind.PARENT_CHILD,
                     union_occurrence_id=union.id,
                     person_occurrence_id=child_id,
-                    points=(
-                        LayoutPoint(union_node.x, union_node.y),
-                        LayoutPoint(child_node.x + child_node.width / 2, union_node.y),
-                        LayoutPoint(child_node.x + child_node.width / 2, child_node.y),
-                    ),
+                    points=points,
                 )
             )
 
