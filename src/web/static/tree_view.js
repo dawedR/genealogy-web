@@ -15,12 +15,10 @@ function parseTreeViewOptions(params) {
     const personId = params.get("person_id");
     const ancestorGenerations = parseGeneration(params.get("ancestor_generations"));
     const descendantGenerations = parseGeneration(params.get("descendant_generations"));
-    const showSiblings = params.get("show_siblings");
 
     if (
         personId === null || personId === "" ||
-        ancestorGenerations === null || descendantGenerations === null ||
-        (showSiblings !== "true" && showSiblings !== "false")
+        ancestorGenerations === null || descendantGenerations === null
     ) {
         return null;
     }
@@ -29,7 +27,6 @@ function parseTreeViewOptions(params) {
         personId,
         ancestorGenerations,
         descendantGenerations,
-        showSiblings,
     };
 }
 
@@ -47,7 +44,7 @@ async function loadDedicatedTree(options) {
     const query = new URLSearchParams({
         ancestor_generations: String(options.ancestorGenerations),
         descendant_generations: String(options.descendantGenerations),
-        show_siblings: options.showSiblings,
+        show_siblings: "false",
     });
     try {
         const response = await fetch(

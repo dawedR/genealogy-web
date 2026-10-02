@@ -2,6 +2,7 @@ const importForm = document.querySelector("#import-form");
 const fileInput = document.querySelector("#gedcom-file");
 const importStatus = document.querySelector("#import-status");
 const importReport = document.querySelector("#import-report");
+const gedcomStatus = document.querySelector("#gedcom-status");
 
 const placesStatus = document.querySelector("#places-status");
 const placesTable = document.querySelector("#places-table");
@@ -47,9 +48,7 @@ const searchForm = document.querySelector("#search-form");
 const searchQuery = document.querySelector("#search-query");
 const searchResults = document.querySelector("#search-results");
 
-const generationsInput = document.querySelector("#generations");
 const selectedPerson = document.querySelector("#selected-person");
-const ancestryContainer = document.querySelector("#ancestry");
 
 const importDetails =
     document.querySelector("#import-details");
@@ -102,9 +101,6 @@ const treeAncestorGenerations =
 const treeDescendantGenerations =
     document.querySelector("#tree-descendant-generations");
 
-const treeShowSiblings =
-    document.querySelector("#tree-show-siblings");
-
 const treeStatus =
     document.querySelector("#tree-status");
 
@@ -117,7 +113,11 @@ const treeDiagnostics =
 const openTreeViewButton =
     document.querySelector("#open-tree-view");
 
+const DEFAULT_PERSON_ID = "@I1@";
+
 let treeRequestSerial = 0;
+let fanRequestSerial = 0;
+let selectionRequestSerial = 0;
 
 const fanLabelSosa =
     document.querySelector("#fan-label-sosa");
@@ -209,19 +209,14 @@ importForm.addEventListener("submit", async (event) => {
             `Import réussi : ${data.filename}`;
         
         renderImportDetails(data);
+        await loadGedcomStatus();
         selectedPlace = null;
         placeEnrichmentForm.hidden = true;
-        loadPlaces();
+        await loadPlaces();
 
-        selectedPersonId = null;
-        selectedPerson.textContent =
-            "Aucune personne sélectionnée.";
+        clearPersonSelection();
         searchResults.innerHTML = "";
-        ancestryContainer.innerHTML = "";
-        clearTreeChart(
-            "Sélectionnez une personne pour afficher l’arbre.",
-        );
-        openTreeViewButton.disabled = true;
+        await selectDefaultPerson();
 
     } catch (error) {
         importStatus.textContent = error.message;
@@ -388,13 +383,6 @@ placeEnrichmentValidate.addEventListener("click", async () => {
     }
 });
 
-
-generationsInput.addEventListener("change", () => {
-    if (selectedPersonId !== null) {
-        loadAncestry(selectedPersonId);
-    }
-});
-
 fanRenderButton.addEventListener("click", () => {
     if (selectedPersonId !== null) {
         loadFanChart(selectedPersonId);
@@ -422,7 +410,6 @@ fanColorMode.addEventListener("change", () => {
 for (const control of [
     treeAncestorGenerations,
     treeDescendantGenerations,
-    treeShowSiblings,
 ]) {
     control.addEventListener("change", () => {
         if (selectedPersonId !== null) {
@@ -439,7 +426,6 @@ openTreeViewButton.addEventListener("click", () => {
         person_id: selectedPersonId,
         ancestor_generations: treeAncestorGenerations.value,
         descendant_generations: treeDescendantGenerations.value,
-        show_siblings: String(treeShowSiblings.checked),
     });
     window.open(`/tree-view?${query.toString()}`, "_blank", "noopener");
 });
@@ -452,6 +438,87 @@ fanOpening.addEventListener("input", () => {
         loadFanChart(selectedPersonId);
     }
 });
+
+function clearPersonSelection() {
+    selectionRequestSerial += 1;
+    selectedPersonId = null;
+    selectedPerson.textContent = "Aucune personne sélectionnée.";
+    fanRequestSerial += 1;
+    fanChart.innerHTML = "";
+    fanStatus.textContent = "Sélectionnez une personne pour afficher l’éventail.";
+    clearFanLegend();
+    fanRenderButton.disabled = true;
+    clearTreeChart("Sélectionnez une personne pour afficher l’arbre.");
+    openTreeViewButton.disabled = true;
+}
+
+
+function selectPerson(person) {
+    selectionRequestSerial += 1;
+    selectedPersonId = person.id;
+    fanRenderButton.disabled = false;
+    fanChart.innerHTML = "";
+    fanStatus.textContent = "";
+    clearTreeChart("Chargement de l’arbre familial…");
+    openTreeViewButton.disabled = false;
+
+    const birth = person.birth_date
+        ? " — naissance : " + person.birth_date
+        : "";
+
+    selectedPerson.textContent =
+        "Souche : " + person.given_names + " " + person.surname + birth;
+
+    loadFanChart(person.id);
+    loadTreeChart(person.id);
+}
+
+
+async function selectDefaultPerson() {
+    const requestSerial = ++selectionRequestSerial;
+
+    try {
+        const response = await fetch(
+            "/people/" + encodeURIComponent(DEFAULT_PERSON_ID),
+        );
+
+        if (requestSerial !== selectionRequestSerial) {
+            return false;
+        }
+
+        if (response.status === 404) {
+            return false;
+        }
+
+        const person = await response.json();
+
+        if (requestSerial !== selectionRequestSerial) {
+            return false;
+        }
+
+        if (!response.ok) {
+            throw new Error(
+                person.detail || "Impossible de sélectionner la souche par défaut",
+            );
+        }
+
+        selectPerson(person);
+        return true;
+    } catch (error) {
+        if (requestSerial === selectionRequestSerial) {
+            console.error(error);
+        }
+        return false;
+    }
+}
+
+
+async function initializePage() {
+    await loadGedcomStatus();
+    await loadPlaces();
+    await selectDefaultPerson();
+}
+
 
 function renderSearchResults(people) {
     searchResults.innerHTML = "";
@@ -478,25 +545,7 @@ function renderSearchResults(people) {
             `${person.given_names} ${person.surname}${birth}`;
 
         button.addEventListener("click", () => {
-            selectedPersonId = person.id;
-            fanRenderButton.disabled = false;
-            fanChart.innerHTML = "";
-            fanStatus.textContent = "";
-            clearTreeChart(
-                "Chargement de l’arbre familial…",
-            );
-            openTreeViewButton.disabled = false;
-
-            const birth = person.birth_date
-                ? ` — naissance : ${person.birth_date}`
-                : "";
-
-            selectedPerson.textContent =
-                `Souche : ${person.given_names} ${person.surname}${birth}`;
-
-            loadAncestry(person.id);
-            loadFanChart(person.id);
-            loadTreeChart(person.id);
+            selectPerson(person);
         });
 
         item.appendChild(button);
@@ -504,6 +553,32 @@ function renderSearchResults(people) {
     }
 
     searchResults.appendChild(list);
+}
+
+
+async function loadGedcomStatus() {
+    try {
+        const response = await fetch("/health");
+        const health = await response.json();
+
+        if (!response.ok) {
+            throw new Error(health.detail || "Impossible de charger l’état du GEDCOM");
+        }
+
+        if (health.source !== null && health.filename !== null) {
+            gedcomStatus.textContent =
+                "GEDCOM : " + health.filename + " · " +
+                health.persons_count + " personnes" +
+                (health.source === "AUTO" ? " · chargé automatiquement" : "");
+            return;
+        }
+
+        gedcomStatus.textContent = health.load_error
+            ? "GEDCOM : aucun fichier actif · " + health.load_error
+            : "GEDCOM : aucun fichier actif";
+    } catch (error) {
+        gedcomStatus.textContent = error.message;
+    }
 }
 
 
@@ -733,68 +808,6 @@ function formatPlaceEventCounts(eventCounts) {
 }
 
 
-async function loadAncestry(personId) {
-    const generations = generationsInput.value;
-
-    ancestryContainer.textContent =
-        "Calcul de l'ascendance…";
-
-    try {
-        const response = await fetch(
-            `/people/${encodeURIComponent(personId)}` +
-            `/ancestors?generations=${encodeURIComponent(generations)}`
-        );
-
-        const ancestors = await response.json();
-
-        if (!response.ok) {
-            throw new Error(
-                ancestors.detail ||
-                "Impossible de calculer l'ascendance"
-            );
-        }
-
-        renderAncestry(ancestors);
-
-    } catch (error) {
-        ancestryContainer.textContent = error.message;
-    }
-}
-
-
-function renderAncestry(ancestors) {
-    ancestryContainer.innerHTML = "";
-
-    if (ancestors.length === 0) {
-        ancestryContainer.textContent =
-            "Aucune ascendance connue.";
-        return;
-    }
-
-    const list = document.createElement("div");
-    list.className = "ancestry-list";
-
-    for (const ancestor of ancestors) {
-        const row = document.createElement("div");
-
-        row.className = "ancestor";
-        row.style.setProperty(
-            "--generation",
-            ancestor.generation
-        );
-
-        const person = ancestor.person;
-
-        row.textContent =
-            `G${ancestor.generation} — ` +
-            `${person.given_names} ${person.surname}`;
-
-        list.appendChild(row);
-    }
-
-    ancestryContainer.appendChild(list);
-}
-
 function renderImportDetails(report) {
     warningsList.innerHTML = "";
     ignoredTagsList.innerHTML = "";
@@ -839,8 +852,6 @@ function clearTreeChart(statusMessage) {
     treeDiagnostics.hidden = true;
     treeDiagnostics.textContent = "";
 }
-
-
 async function loadTreeChart(personId) {
     const requestSerial = ++treeRequestSerial;
     const ancestors = Number(treeAncestorGenerations.value);
@@ -855,7 +866,7 @@ async function loadTreeChart(personId) {
             `/people/${encodeURIComponent(personId)}` +
             `/tree?ancestor_generations=${encodeURIComponent(ancestors)}` +
             `&descendant_generations=${encodeURIComponent(descendants)}` +
-            `&show_siblings=${encodeURIComponent(treeShowSiblings.checked)}`,
+            "&show_siblings=false",
         );
         const tree = await response.json();
 
@@ -891,6 +902,7 @@ async function loadTreeChart(personId) {
 
 
 async function loadFanChart(personId) {
+    const requestSerial = ++fanRequestSerial;
     const generations = Number(fanGenerations.value);
 
     fanStatus.textContent = "Calcul de l'éventail…";
@@ -904,6 +916,10 @@ async function loadFanChart(personId) {
         );
 
         const occurrences = await response.json();
+
+        if (requestSerial !== fanRequestSerial) {
+            return;
+        }
 
         if (!response.ok) {
             throw new Error(
@@ -926,7 +942,9 @@ async function loadFanChart(personId) {
             `${occurrences.length} positions Sosa`;
 
     } catch (error) {
-        fanStatus.textContent = error.message;
+        if (requestSerial === fanRequestSerial) {
+            fanStatus.textContent = error.message;
+        }
     }
 }
 
@@ -1988,6 +2006,9 @@ function getFanLabelConfig() {
         showDeathPlace: fanLabelDeathPlace.checked,
     };
 }
+
+void initializePage();
+
 
 function formatEventLabel(
     symbol,

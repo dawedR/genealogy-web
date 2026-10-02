@@ -726,10 +726,18 @@ def test_index_page():
 
     assert response.status_code == 200
     assert "Genealogy Web" in response.text
+    assert 'id="gedcom-status"' in response.text
+    assert '<details id="gedcom-details" class="secondary-panel">' in response.text
+    assert '<details id="places-details" class="secondary-panel">' in response.text
+    assert '<details id="gedcom-details" class="secondary-panel" open' not in response.text
+    assert '<details id="places-details" class="secondary-panel" open' not in response.text
     assert 'id="import-form"' in response.text
     assert 'id="search-form"' in response.text
-    assert 'id="warnings-section"' in response.text
-    assert 'id="ignored-tags-section"' in response.text
+    assert 'id="selected-person"' in response.text
+    assert 'id="ancestry"' not in response.text
+    assert 'id="generations"' not in response.text
+    assert 'id="tree-show-siblings"' not in response.text
+    assert "Afficher la fratrie" not in response.text
     for element_id in (
         "places-status",
         "places-table",
@@ -745,25 +753,23 @@ def test_index_page():
         "place-geocoding-query",
         "place-geocoding-search",
         "place-geocoding-results",
+        "fan-opening",
+        "fan-chart",
+        "fan-legend",
+        "fan-legend-list",
+        "fan-label-sosa",
+        "fan-label-name",
+        "fan-label-birth",
+        "fan-label-death",
     ):
         assert f'id="{element_id}"' in response.text
-
-    assert 'id="fan-opening"' in response.text
-    assert 'id="fan-chart"' in response.text
-    assert 'id="fan-legend"' in response.text
-    assert 'id="fan-legend-list"' in response.text
-    assert 'id="fan-label-sosa"' in response.text
-    assert 'id="fan-label-name"' in response.text
-    assert 'id="fan-label-birth"' in response.text
-    assert 'id="fan-label-death"' in response.text
-
-
 def test_static_javascript():
     with make_client() as client:
         response = client.get("/static/app.js")
 
     assert response.status_code == 200
-    assert "loadAncestry" in response.text
+    assert "loadAncestry" not in response.text
+    assert "loadGedcomStatus" in response.text
     assert "loadPlaces" in response.text
     assert "selectPlace" in response.text
     assert "optionalCoordinate" in response.text
@@ -773,6 +779,7 @@ def test_static_javascript():
     assert "placeStatusLabel" in response.text
     assert "place-enrichments/validate" in response.text
     assert "loadFanChart(person.id);" in response.text
+    assert "loadTreeChart(person.id);" in response.text
     assert "renderImportDetails" in response.text
     assert "createFanGeometry" in response.text
     assert "setFanViewBox" in response.text
@@ -796,7 +803,11 @@ def test_static_portrait_fallback_assets_are_served():
     with make_client() as client:
         responses = {
             filename: client.get(f"/static/portraits/{filename}")
-            for filename in ("fallback-male.png", "fallback-female.png", "fallback-unknown.svg")
+            for filename in (
+                "fallback-male.png",
+                "fallback-female.png",
+                "fallback-unknown.svg",
+            )
         }
 
     assert all(response.status_code == 200 for response in responses.values())
@@ -805,23 +816,51 @@ def test_static_portrait_fallback_assets_are_served():
     assert responses["fallback-unknown.svg"].headers["content-type"] == "image/svg+xml"
 
 
-def test_static_javascript_loads_fan_chart_when_selecting_a_person():
+def test_static_javascript_reuses_one_person_selection_flow():
     with make_client() as client:
         response = client.get("/static/app.js")
 
     assert response.status_code == 200
+    script = response.text
 
-    selection_start = response.text.index(
-        'button.addEventListener("click", () => {'
-    )
-    selection_end = response.text.index(
-        "item.appendChild(button);",
-        selection_start,
-    )
-    selection_handler = response.text[selection_start:selection_end]
+    click_start = script.index("button.addEventListener(\"click\", () => {")
+    click_end = script.index("item.appendChild(button);", click_start)
+    assert "selectPerson(person);" in script[click_start:click_end]
 
-    assert selection_handler.index("loadAncestry(person.id);") < (
-        selection_handler.index("loadFanChart(person.id);")
+    selection_start = script.index("function selectPerson(person)")
+    selection_end = script.index("async function selectDefaultPerson", selection_start)
+    selection = script[selection_start:selection_end]
+    assert selection.index("loadFanChart(person.id);") < (
+        selection.index("loadTreeChart(person.id);")
+    )
+
+
+def test_static_javascript_selects_i1_only_when_it_exists():
+    with make_client() as client:
+        response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    script = response.text
+
+    assert "const DEFAULT_PERSON_ID = \"@I1@\";" in script
+    assert "\"/people/\" + encodeURIComponent(DEFAULT_PERSON_ID)" in script
+    assert "if (response.status === 404)" in script
+    assert "await selectDefaultPerson();" in script
+    assert "void initializePage();" in script
+    assert "clearPersonSelection();" in script
+
+    import_start = script.index("importForm.addEventListener")
+    import_end = script.index("searchForm.addEventListener", import_start)
+    import_handler = script[import_start:import_end]
+    assert import_handler.index("clearPersonSelection();") < (
+        import_handler.index("await selectDefaultPerson();")
+    )
+
+    initial_start = script.index("async function initializePage()")
+    initial_end = script.index("function renderSearchResults", initial_start)
+    initial_load = script[initial_start:initial_end]
+    assert initial_load.index("await loadGedcomStatus();") < (
+        initial_load.index("await selectDefaultPerson();")
     )
 
 
@@ -830,7 +869,6 @@ def test_static_javascript_uses_ordered_label_degradation():
         response = client.get("/static/app.js")
 
     assert response.status_code == 200
-
     script = response.text
 
     variants_start = script.index("function buildPersonLabelVariants")
@@ -848,7 +886,6 @@ def test_static_javascript_uses_ordered_label_degradation():
     assert "buildPersonLabelLines" not in script
     assert 'precision === "year"' in script
     assert "variants[variants.length - 1]" in script
-
 def test_search_uploaded_people_by_birth_year():
     with make_client() as client:
         with GEDCOM_FIXTURE.open("rb") as gedcom_file:
@@ -1429,12 +1466,13 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     for element_id in (
         "tree-ancestor-generations",
         "tree-descendant-generations",
-        "tree-show-siblings",
         "tree-chart",
         "tree-diagnostics",
         "open-tree-view",
     ):
         assert f'id="{element_id}"' in response.text
+    assert 'id="tree-show-siblings"' not in response.text
+    assert "Afficher la fratrie" not in response.text
     assert 'id="tree-ancestor-generations"' in response.text
     assert 'min="0"' in response.text
     assert 'max="10"' in response.text
@@ -1442,6 +1480,8 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     assert 'renderTree(treeChart, tree);' in javascript.text
     assert 'window.open(`/tree-view?${query.toString()}`, "_blank", "noopener")' in javascript.text
     assert 'new URLSearchParams({' in javascript.text
+    assert '"&show_siblings=false"' in javascript.text
+    assert "treeShowSiblings" not in javascript.text
     assert 'edge.points.map' not in javascript.text
     assert 'tree.layout.person_nodes' not in javascript.text
     assert 'tree.layout.edges' not in javascript.text
@@ -1466,12 +1506,10 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     assert 'for (const node of tree.layout.person_nodes)' in renderer.text
     assert 'layout_combined_tree' not in renderer.text
     assert 'parent_child_links' not in renderer.text
-
-
 def test_dedicated_tree_view_uses_the_shared_renderer_and_natural_svg_size():
     with make_client() as client:
         page = client.get(
-            "/tree-view?person_id=%40I1%40&ancestor_generations=2&descendant_generations=2&show_siblings=false"
+            "/tree-view?person_id=%40I1%40&ancestor_generations=2&descendant_generations=2"
         )
         javascript = client.get("/static/tree_view.js")
         stylesheet = client.get("/static/tree_view.css")
@@ -1484,6 +1522,8 @@ def test_dedicated_tree_view_uses_the_shared_renderer_and_natural_svg_size():
     assert 'new URLSearchParams(window.location.search)' in javascript.text
     assert 'parseTreeViewOptions' in javascript.text
     assert 'encodeURIComponent(options.personId)' in javascript.text
+    assert 'show_siblings: "false"' in javascript.text
+    assert "showSiblings" not in javascript.text
     assert 'renderTree(treeViewChart, tree, {naturalSize: true});' in javascript.text
     assert 'layout_combined_tree' not in javascript.text
     assert 'parent_child_links' not in javascript.text
@@ -1503,8 +1543,6 @@ def test_dedicated_tree_view_uses_the_shared_renderer_and_natural_svg_size():
     assert "width: 100vw;" not in stylesheet.text
     assert "height: calc(100vh" not in stylesheet.text
     assert "max-width: none;" in stylesheet.text
-
-
 def tree_api_genealogy() -> Genealogy:
     return Genealogy(
         persons={

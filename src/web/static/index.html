@@ -12,10 +12,12 @@
     <header>
         <h1>Genealogy Web</h1>
         <p>Exploration d'une généalogie à partir d'un fichier GEDCOM.</p>
+        <p id="gedcom-status" class="status">Chargement du GEDCOM…</p>
     </header>
 
-    <section>
-        <h2>1. Importer un GEDCOM</h2>
+    <details id="gedcom-details" class="secondary-panel">
+        <summary>Données / GEDCOM</summary>
+        <div class="secondary-panel-content">
 
         <form id="import-form">
             <input
@@ -59,10 +61,12 @@
                 <ul id="ignored-tags-list"></ul>
             </div>
         </div>
-    </section>
+        </div>
+    </details>
 
-    <section>
-        <h2>2. Lieux</h2>
+    <details id="places-details" class="secondary-panel">
+        <summary>Lieux et enrichissements</summary>
+        <div class="secondary-panel-content">
 
         <p id="places-status" class="status">
             Importez un GEDCOM pour afficher les lieux.
@@ -166,10 +170,11 @@
 
             <button type="submit">Enregistrer l’enrichissement</button>
         </form>
-    </section>
+        </div>
+    </details>
 
     <section>
-        <h2>3. Choisir la personne souche</h2>
+        <h2>Personne de référence</h2>
 
         <form id="search-form">
             <input
@@ -182,32 +187,15 @@
             <button type="submit">Rechercher</button>
         </form>
 
-        <div id="search-results"></div>
-    </section>
-
-    <section>
-        <h2>4. Ascendance</h2>
-
-        <label for="generations">
-            Générations :
-        </label>
-
-        <input
-            id="generations"
-            type="number"
-            min="0"
-            max="20"
-            value="3"
-        >
-
         <p id="selected-person">
             Aucune personne sélectionnée.
         </p>
 
-        <div id="ancestry"></div>
+        <div id="search-results"></div>
     </section>
+
     <section>
-        <h2>5. Éventail d'ascendance</h2>
+        <h2>Éventail d'ascendance</h2>
 
         <div class="fan-controls">
             <label for="fan-generations">
@@ -344,7 +332,7 @@
     </section>
 
     <section>
-        <h2>6. Arbre familial</h2>
+        <h2>Arbre familial</h2>
 
         <div class="tree-controls">
             <label for="tree-ancestor-generations">
@@ -368,11 +356,6 @@
                 max="10"
                 value="2"
             >
-
-            <label>
-                <input id="tree-show-siblings" type="checkbox">
-                Afficher la fratrie
-            </label>
 
             <button id="open-tree-view" type="button" disabled>
                 Ouvrir l’arbre en plein écran

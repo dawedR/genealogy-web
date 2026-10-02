@@ -116,17 +116,6 @@ button {
     font-weight: 600;
 }
 
-.ancestry-list {
-    margin-top: 1rem;
-    font-family: monospace;
-}
-
-.ancestor {
-    margin: 0.3rem 0;
-    margin-left:
-        calc(var(--generation) * 2rem);
-}
-
 #import-details {
     margin-top: 1rem;
 }
@@ -432,4 +421,29 @@ button {
 #tree-diagnostics {
     margin-bottom: 0;
     color: #7a4d00;
+}
+
+
+#gedcom-status {
+    margin: 0.5rem 0 0;
+    color: #444;
+    font-weight: 600;
+}
+
+.secondary-panel {
+    margin-bottom: 1rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: white;
+}
+
+.secondary-panel summary {
+    cursor: pointer;
+    padding: 1rem 1.5rem;
+    font-weight: 600;
+}
+
+.secondary-panel-content {
+    padding: 0 1.5rem 1.5rem;
+    border-top: 1px solid #ddd;
 }
