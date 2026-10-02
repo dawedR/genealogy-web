@@ -27,6 +27,9 @@ class HealthResponse(BaseModel):
     status: str
     persons_count: int
     families_count: int
+    source: Literal["AUTO", "MANUAL"] | None
+    filename: str | None
+    load_error: str | None
 
 
 class IgnoredTagResponse(BaseModel):

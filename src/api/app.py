@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import stat
 import tempfile
 import time
 import uuid
@@ -110,6 +112,48 @@ from src.storage.place_enrichments import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _GenealogyProvenance:
+    source: Literal["AUTO", "MANUAL"] | None = None
+    filename: str | None = None
+    load_error: str | None = None
+
+
+def _latest_gedcom_file(directory: Path) -> Path | None:
+    """Return the newest regular ``*.ged`` file without descending into children.
+
+    The filename is the deterministic secondary key when filesystem mtimes are
+    identical. Descending filename order matches the descending mtime order.
+    """
+
+    candidates: list[tuple[int, str, Path]] = []
+    for entry in directory.iterdir():
+        try:
+            metadata = entry.stat()
+        except OSError:
+            logger.warning("Cannot inspect configured GEDCOM export %s", entry)
+            continue
+
+        if entry.suffix != ".ged" or not stat.S_ISREG(metadata.st_mode):
+            continue
+
+        candidates.append((metadata.st_mtime_ns, entry.name, entry))
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda candidate: candidate[:2])[2]
+
+
+def _load_gedcom(path: Path) -> tuple[Genealogy, ImportReport]:
+    """Use the sole GEDCOM parser/importer used by every import source."""
+
+    return import_gedcom(path)
+
+
 @dataclass(frozen=True)
 class _PendingGeocodingCandidate:
     original_name: str
@@ -157,6 +201,7 @@ def create_app(
     portrait_resolver: PortraitResolver | None = None,
 ) -> FastAPI:
     initial_genealogy = genealogy or Genealogy()
+    configured_gedcom_dir = os.environ.get("GENEALOGY_GEDCOM_DIR")
     geneweb_portraits_dir = os.environ.get("GENEWEB_PORTRAITS_DIR")
     initial_place_enrichment_store = (
         place_enrichment_store or InMemoryPlaceEnrichmentStore()
@@ -178,6 +223,52 @@ def create_app(
         app.state.geocoder = initial_geocoder
         app.state.pending_geocoding_candidates = pending_geocoding_candidates
         app.state.portrait_resolver = initial_portrait_resolver
+        app.state.genealogy_provenance = _GenealogyProvenance()
+
+        if genealogy is None and configured_gedcom_dir:
+            configured_directory = Path(configured_gedcom_dir)
+            try:
+                selected_gedcom = _latest_gedcom_file(configured_directory)
+            except OSError as exc:
+                message = f"Configured GEDCOM directory is unavailable: {exc}"
+                logger.warning(message)
+                app.state.genealogy_provenance = _GenealogyProvenance(
+                    load_error=message,
+                )
+            else:
+                if selected_gedcom is None:
+                    message = (
+                        "No regular .ged file found in configured GEDCOM directory"
+                    )
+                    logger.warning("%s: %s", message, configured_directory)
+                    app.state.genealogy_provenance = _GenealogyProvenance(
+                        load_error=message,
+                    )
+                else:
+                    try:
+                        loaded_genealogy, _ = _load_gedcom(selected_gedcom)
+                    except Exception as exc:
+                        message = f"Automatic GEDCOM import failed: {exc}"
+                        logger.exception(
+                            "%s: %s",
+                            message,
+                            selected_gedcom.name,
+                        )
+                        app.state.genealogy_provenance = _GenealogyProvenance(
+                            filename=selected_gedcom.name,
+                            load_error=message,
+                        )
+                    else:
+                        app.state.genealogy = loaded_genealogy
+                        app.state.genealogy_provenance = _GenealogyProvenance(
+                            source="AUTO",
+                            filename=selected_gedcom.name,
+                        )
+                        logger.info(
+                            "Automatically loaded GEDCOM export %s",
+                            selected_gedcom.name,
+                        )
+
         yield
 
     app = FastAPI(
@@ -240,6 +331,9 @@ def create_app(
             status="ok",
             persons_count=len(current.persons),
             families_count=len(current.families),
+            source=_genealogy_provenance(request).source,
+            filename=_genealogy_provenance(request).filename,
+            load_error=_genealogy_provenance(request).load_error,
         )
 
     @app.post(
@@ -267,7 +361,7 @@ def create_app(
                 while chunk := await file.read(1024 * 1024):
                     temp_file.write(chunk)
 
-            genealogy, report = import_gedcom(temp_path)
+            genealogy, report = _load_gedcom(Path(temp_path))
 
         except Exception as exc:
             raise HTTPException(
@@ -287,6 +381,10 @@ def create_app(
         # Atomic from the application's point of view:
         # only replace the current genealogy after a successful import.
         request.app.state.genealogy = genealogy
+        request.app.state.genealogy_provenance = _GenealogyProvenance(
+            source="MANUAL",
+            filename=filename,
+        )
 
         return _import_report_response(
             filename=filename,
@@ -874,6 +972,10 @@ def _pending_geocoding_candidates(request: Request) -> _PendingGeocodingCandidat
 
 def _genealogy(request: Request) -> Genealogy:
     return request.app.state.genealogy
+
+
+def _genealogy_provenance(request: Request) -> _GenealogyProvenance:
+    return request.app.state.genealogy_provenance
 
 
 def _place_enrichment_store(request: Request) -> PlaceEnrichmentStore:

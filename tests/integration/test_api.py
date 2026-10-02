@@ -1,4 +1,6 @@
 from urllib import response
+import os
+import importlib
 
 from fastapi.testclient import TestClient
 
@@ -81,6 +83,9 @@ def test_health():
         "status": "ok",
         "persons_count": 3,
         "families_count": 1,
+        "source": None,
+        "filename": None,
+        "load_error": None,
     }
 
 
@@ -444,6 +449,172 @@ from pathlib import Path
 GEDCOM_FIXTURE = Path(
     "tests/fixtures/gedcom-edge-cases.ged"
 )
+
+
+def _write_auto_gedcom(path: Path) -> None:
+    path.write_bytes(GEDCOM_FIXTURE.read_bytes())
+
+
+def _auto_gedcom_health(client: TestClient) -> dict:
+    response = client.get("/health")
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_auto_gedcom_is_disabled_without_configuration(monkeypatch):
+    monkeypatch.delenv("GENEALOGY_GEDCOM_DIR", raising=False)
+
+    with TestClient(create_app()) as client:
+        health = _auto_gedcom_health(client)
+
+    assert health == {
+        "status": "ok",
+        "persons_count": 0,
+        "families_count": 0,
+        "source": None,
+        "filename": None,
+        "load_error": None,
+    }
+
+
+def test_auto_gedcom_missing_directory_keeps_application_available(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("GENEALOGY_GEDCOM_DIR", str(tmp_path / "missing"))
+
+    with TestClient(create_app()) as client:
+        health = _auto_gedcom_health(client)
+
+    assert health["persons_count"] == 0
+    assert health["source"] is None
+    assert health["filename"] is None
+    assert "unavailable" in health["load_error"]
+
+
+def test_auto_gedcom_empty_directory_keeps_application_available(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("GENEALOGY_GEDCOM_DIR", str(tmp_path))
+
+    with TestClient(create_app()) as client:
+        health = _auto_gedcom_health(client)
+
+    assert health["persons_count"] == 0
+    assert health["source"] is None
+    assert health["filename"] is None
+    assert "No regular .ged file" in health["load_error"]
+
+
+def test_auto_gedcom_loads_one_regular_export(monkeypatch, tmp_path):
+    export = tmp_path / "Famille_2026-10-02_15-00-08.ged"
+    _write_auto_gedcom(export)
+    monkeypatch.setenv("GENEALOGY_GEDCOM_DIR", str(tmp_path))
+
+    with TestClient(create_app()) as client:
+        health = _auto_gedcom_health(client)
+
+    assert health["persons_count"] == 4
+    assert health["families_count"] == 1
+    assert health["source"] == "AUTO"
+    assert health["filename"] == export.name
+    assert health["load_error"] is None
+
+
+def test_auto_gedcom_selects_newest_mtime_and_ignores_non_ged_files(
+    monkeypatch, tmp_path
+):
+    older = tmp_path / "older.ged"
+    newer = tmp_path / "newer.ged"
+    ignored = tmp_path / "latest.ged.tmp"
+    uppercase = tmp_path / "LATEST.GED"
+    for path in (older, newer, ignored, uppercase):
+        _write_auto_gedcom(path)
+
+    os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
+    os.utime(ignored, ns=(3_000_000_000, 3_000_000_000))
+    os.utime(uppercase, ns=(4_000_000_000, 4_000_000_000))
+    monkeypatch.setenv("GENEALOGY_GEDCOM_DIR", str(tmp_path))
+
+    with TestClient(create_app()) as client:
+        health = _auto_gedcom_health(client)
+
+    assert health["source"] == "AUTO"
+    assert health["filename"] == newer.name
+
+
+def test_auto_gedcom_uses_filename_as_deterministic_mtime_tie_breaker(
+    monkeypatch, tmp_path
+):
+    first = tmp_path / "a.ged"
+    second = tmp_path / "b.ged"
+    _write_auto_gedcom(first)
+    _write_auto_gedcom(second)
+    timestamp_ns = 2_000_000_000
+    os.utime(first, ns=(timestamp_ns, timestamp_ns))
+    os.utime(second, ns=(timestamp_ns, timestamp_ns))
+    monkeypatch.setenv("GENEALOGY_GEDCOM_DIR", str(tmp_path))
+
+    with TestClient(create_app()) as client:
+        health = _auto_gedcom_health(client)
+
+    assert health["filename"] == "b.ged"
+
+
+def test_invalid_auto_gedcom_does_not_prevent_startup(monkeypatch, tmp_path):
+    invalid = tmp_path / "broken.ged"
+    invalid.write_text("This is not a GEDCOM file.", encoding="utf-8")
+    monkeypatch.setenv("GENEALOGY_GEDCOM_DIR", str(tmp_path))
+
+    with TestClient(create_app()) as client:
+        health = _auto_gedcom_health(client)
+
+    assert health["persons_count"] == 0
+    assert health["source"] is None
+    assert health["filename"] == invalid.name
+    assert health["load_error"].startswith("Automatic GEDCOM import failed:")
+
+
+def test_manual_import_replaces_auto_import_and_uses_same_loader(
+    monkeypatch, tmp_path
+):
+    auto_export = tmp_path / "automatic.ged"
+    _write_auto_gedcom(auto_export)
+    monkeypatch.setenv("GENEALOGY_GEDCOM_DIR", str(tmp_path))
+
+    api_module = importlib.import_module("src.api.app")
+    calls: list[Path] = []
+    original_load = api_module._load_gedcom
+
+    def tracked_load(path: Path):
+        calls.append(path)
+        return original_load(path)
+
+    monkeypatch.setattr(api_module, "_load_gedcom", tracked_load)
+
+    with TestClient(create_app()) as client:
+        assert _auto_gedcom_health(client)["source"] == "AUTO"
+
+        with GEDCOM_FIXTURE.open("rb") as gedcom_file:
+            response = client.post(
+                "/imports",
+                files={
+                    "file": (
+                        "manual.ged",
+                        gedcom_file,
+                        "application/octet-stream",
+                    )
+                },
+            )
+
+        assert response.status_code == 200
+        health = _auto_gedcom_health(client)
+
+    assert health["source"] == "MANUAL"
+    assert health["filename"] == "manual.ged"
+    assert health["load_error"] is None
+    assert len(calls) == 2
+
 
 
 def test_upload_gedcom_replaces_active_genealogy():
