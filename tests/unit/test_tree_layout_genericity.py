@@ -9,7 +9,11 @@ import pytest
 
 from src.domain.models import Family, Genealogy, Person
 from src.services.combined_tree import CombinedTreeOptions, build_combined_tree
-from src.services.tree_layout import LayoutEdgeKind, layout_combined_tree
+from src.services.tree_layout import (
+    LayoutEdgeKind,
+    TreeLayoutConfiguration,
+    layout_combined_tree,
+)
 
 
 class FamilyBuilder:
@@ -211,6 +215,35 @@ def test_synthetic_layout_geometry(name: str) -> None:
     ]
     assert len(actual_edges) == len(expected_edges)
     assert set(actual_edges) == expected_edges
+
+    configuration = TreeLayoutConfiguration()
+    projection_people = {item.id: item for item in tree.person_occurrences}
+    family_by_union = {item.id: item.family_id for item in tree.union_occurrences}
+    for union in tree.union_occurrences:
+        suffix = f":family:{family_by_union[union.id]}"
+        pivot_id = union.id.removeprefix("union:").removesuffix(suffix)
+        if (
+            union.id in core.union_occurrence_ids
+            or not union.id.endswith(suffix)
+            or pivot_id not in people
+            or projection_people[pivot_id].generation < 0
+        ):
+            continue
+        pivot = people[pivot_id]
+        other_partners = [
+            people[partner.occurrence_id]
+            for partner in union.partners
+            if partner.occurrence_id != pivot_id
+        ]
+        if other_partners:
+            assert {
+                partner.y for partner in other_partners
+            } == {pivot.y + pivot.height + configuration.descendant_partner_gap}
+        assert unions[union.id].y == (
+            pivot.y
+            + pivot.height
+            + configuration.descendant_partner_gap / 2
+        )
 
     occurrence_person_ids = {item.id: item.person_id for item in tree.person_occurrences}
     union_family_ids = {item.id: item.family_id for item in tree.union_occurrences}

@@ -472,3 +472,250 @@ def test_multiple_unions_use_distinct_partner_tracks():
     assert len({edge.points[1].y for edge in root_edges}) == 3
     assert len({edge.union_occurrence_id for edge in root_edges}) == 3
     assert_edges_are_orthogonal_and_avoid_cards(layout)
+
+
+def test_descendant_pivot_uses_one_vertical_family_envelope_per_union():
+    genealogy = Genealogy(
+        persons={
+            person_id: Person(id=person_id)
+            for person_id in (
+                "@R@", "@S@", "@P@", "@A@", "@B@", "@C@",
+                "@C1@", "@C2@", "@C3@", "@X@", "@OUTSIDE@",
+            )
+        },
+        families={
+            "@ROOT@": Family(id="@ROOT@", partners=["@R@", "@S@"], children=["@P@"]),
+            "@U1@": Family(id="@U1@", partners=["@P@", "@A@"], children=["@C1@", "@C2@"]),
+            "@U2@": Family(id="@U2@", partners=["@P@", "@B@"], children=[]),
+            "@U3@": Family(id="@U3@", partners=["@P@", "@C@"], children=["@C3@"]),
+            "@A_EXTERNAL@": Family(id="@A_EXTERNAL@", partners=["@A@", "@X@"], children=["@OUTSIDE@"])},
+    )
+    tree = build_combined_tree(
+        genealogy,
+        CombinedTreeOptions("@R@", ancestor_generations=0, descendant_generations=2, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+    nodes = nodes_by_occurrence(layout)
+    unions = unions_by_occurrence(layout)
+    pivot_id = "person:union:person:root:family:@ROOT@:child:0"
+    union_ids = [f"union:{pivot_id}:family:@U{index}@" for index in (1, 2, 3)]
+
+    assert [node.occurrence_id for node in layout.person_nodes].count(pivot_id) == 1
+    assert "@OUTSIDE@" not in {
+        occurrence.person_id for occurrence in tree.person_occurrences
+    }
+    assert len({unions[union_id].x for union_id in union_ids}) == 3
+    assert nodes[pivot_id].x + nodes[pivot_id].width / 2 == (
+        unions[union_ids[0]].x + unions[union_ids[-1]].x
+    ) / 2
+
+    partner_ids = [
+        next(
+            partner.occurrence_id
+            for partner in next(item for item in tree.union_occurrences if item.id == union_id).partners
+            if partner.occurrence_id != pivot_id
+        )
+        for union_id in union_ids
+    ]
+    partner_y = {nodes[partner_id].y for partner_id in partner_ids}
+    assert len(partner_y) == 1
+    assert next(iter(partner_y)) > nodes[pivot_id].y
+    assert all(
+        unions[union_id].y == (
+            nodes[pivot_id].y + nodes[pivot_id].height + 12
+        )
+        for union_id in union_ids
+    )
+
+    partner_edges = [
+        edge for edge in layout.edges if edge.kind is LayoutEdgeKind.PARTNER
+    ]
+    pivot_edges = [
+        edge for edge in partner_edges if edge.person_occurrence_id == pivot_id
+    ]
+    assert len(pivot_edges) == 3
+    assert len({edge.points[1].y for edge in pivot_edges}) == 1
+    for union_id, partner_id in zip(union_ids, partner_ids, strict=True):
+        pivot_edge = next(
+            edge for edge in pivot_edges if edge.union_occurrence_id == union_id
+        )
+        spouse_edge = next(
+            edge for edge in partner_edges
+            if edge.union_occurrence_id == union_id
+            and edge.person_occurrence_id == partner_id
+        )
+        partner = nodes[partner_id]
+        union = unions[union_id]
+        assert pivot_edge.points[-1].x == union.x
+        assert pivot_edge.points[-1].y == union.y
+        assert spouse_edge.points[0].x == union.x
+        assert spouse_edge.points[0].y == union.y
+        assert spouse_edge.points[-1].x == partner.x + partner.width / 2
+        assert spouse_edge.points[-1].y == partner.y
+
+    assert {
+        node.occurrence_id: (node.x, node.y, node.width, node.height)
+        for node in layout.person_nodes
+    } == {
+        "person:root": (248.0, 40.0, 160.0, 72.0),
+        "person:union:person:root:family:@ROOT@:partner:1": (440.0, 40.0, 160.0, 72.0),
+        pivot_id: (392.0, 184.0, 160.0, 72.0),
+        partner_ids[0]: (136.0, 280.0, 160.0, 72.0),
+        partner_ids[1]: (440.0, 280.0, 160.0, 72.0),
+        partner_ids[2]: (648.0, 280.0, 160.0, 72.0),
+        "person:union:person:union:person:root:family:@ROOT@:child:0:family:@U1@:child:0": (40.0, 408.0, 160.0, 72.0),
+        "person:union:person:union:person:root:family:@ROOT@:child:0:family:@U1@:child:1": (232.0, 408.0, 160.0, 72.0),
+        "person:union:person:union:person:root:family:@ROOT@:child:0:family:@U3@:child:0": (648.0, 408.0, 160.0, 72.0),
+    }
+
+    child_edges = [
+        edge for edge in layout.edges if edge.kind is LayoutEdgeKind.PARENT_CHILD
+    ]
+    assert {
+        edge.union_occurrence_id for edge in child_edges if edge.union_occurrence_id in union_ids
+    } == {union_ids[0], union_ids[2]}
+    for edge in child_edges:
+        if edge.union_occurrence_id not in union_ids:
+            continue
+        spouse_id = partner_ids[union_ids.index(edge.union_occurrence_id)]
+        spouse = nodes[spouse_id]
+        assert edge.points[0].x == spouse.x + spouse.width / 2
+        assert edge.points[0].y == spouse.y + spouse.height
+        assert nodes[edge.person_occurrence_id].y > spouse.y + spouse.height
+    assert_edges_are_orthogonal_and_avoid_cards(layout)
+
+
+def central_union_genealogy(unions_count: int) -> Genealogy:
+    people = {"@R@": Person(id="@R@")}
+    families = {}
+    for index in range(unions_count):
+        spouse_id = f"@S{index}@"
+        child_id = f"@C{index}@"
+        family_id = f"@U{index}@"
+        people[spouse_id] = Person(id=spouse_id)
+        people[child_id] = Person(id=child_id)
+        families[family_id] = Family(
+            id=family_id,
+            partners=["@R@", spouse_id],
+            children=[child_id],
+        )
+    return Genealogy(persons=people, families=families)
+
+
+def _central_root_edges(layout, tree):
+    return {
+        edge.union_occurrence_id: edge
+        for edge in layout.edges
+        if edge.kind is LayoutEdgeKind.PARTNER
+        and edge.person_occurrence_id == tree.root_occurrence_id
+    }
+
+
+def test_one_central_union_uses_a_shared_couple_bar():
+    tree = build_combined_tree(
+        central_union_genealogy(1),
+        CombinedTreeOptions("@R@", 0, 1, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+    nodes = nodes_by_occurrence(layout)
+    unions = unions_by_occurrence(layout)
+    union_id = tree.central_family_core.union_occurrence_ids[0]
+    root = nodes[tree.root_occurrence_id]
+    root_edge = _central_root_edges(layout, tree)[union_id]
+
+    spouse_id = next(
+        partner.occurrence_id
+        for partner in next(item for item in tree.union_occurrences if item.id == union_id).partners
+        if partner.occurrence_id != tree.root_occurrence_id
+    )
+    spouse_edge = next(
+        edge for edge in layout.edges
+        if edge.kind is LayoutEdgeKind.PARTNER
+        and edge.union_occurrence_id == union_id
+        and edge.person_occurrence_id == spouse_id
+    )
+    child_edge = next(
+        edge for edge in layout.edges
+        if edge.kind is LayoutEdgeKind.PARENT_CHILD
+        and edge.union_occurrence_id == union_id
+    )
+    couple_mid_x = (root_edge.points[0].x + spouse_edge.points[0].x) / 2
+
+    assert root_edge.points[0].x == root.x + root.width / 2
+    assert root_edge.points[0].y == root.y + root.height
+    assert root_edge.points[-1].y == unions[union_id].y
+    assert child_edge.points[0].x == couple_mid_x
+    assert child_edge.points[0].y == unions[union_id].y
+    assert [node.occurrence_id for node in layout.person_nodes].count(
+        tree.root_occurrence_id
+    ) == 1
+    assert_edges_are_orthogonal_and_avoid_cards(layout)
+
+
+def test_two_central_unions_use_symmetric_root_exits_and_one_couple_level():
+    tree = build_combined_tree(
+        central_union_genealogy(2),
+        CombinedTreeOptions("@R@", 0, 1, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+    nodes = nodes_by_occurrence(layout)
+    unions = unions_by_occurrence(layout)
+    root = nodes[tree.root_occurrence_id]
+    root_center_x = root.x + root.width / 2
+    root_bottom_y = root.y + root.height
+    root_edges = _central_root_edges(layout, tree)
+    left_union_id, right_union_id = sorted(
+        tree.central_family_core.union_occurrence_ids,
+        key=lambda union_id: unions[union_id].x,
+    )
+    left_edge = root_edges[left_union_id]
+    right_edge = root_edges[right_union_id]
+
+    assert left_edge.points[0].y == right_edge.points[0].y == root_bottom_y
+    assert left_edge.points[1].y == right_edge.points[1].y
+    assert unions[left_union_id].y == unions[right_union_id].y
+    assert left_edge.points[1].y == unions[left_union_id].y
+    assert abs(root_center_x - left_edge.points[0].x) == abs(
+        right_edge.points[0].x - root_center_x
+    )
+    assert left_edge.points[0].x < root_center_x < right_edge.points[0].x
+    for union_id, root_edge in root_edges.items():
+        spouse_id = next(
+            partner.occurrence_id
+            for partner in next(item for item in tree.union_occurrences if item.id == union_id).partners
+            if partner.occurrence_id != tree.root_occurrence_id
+        )
+        spouse_edge = next(
+            edge for edge in layout.edges
+            if edge.kind is LayoutEdgeKind.PARTNER
+            and edge.union_occurrence_id == union_id
+            and edge.person_occurrence_id == spouse_id
+        )
+        child_edge = next(
+            edge for edge in layout.edges
+            if edge.kind is LayoutEdgeKind.PARENT_CHILD
+            and edge.union_occurrence_id == union_id
+        )
+        assert child_edge.points[0].x == (
+            root_edge.points[0].x + spouse_edge.points[0].x
+        ) / 2
+        assert child_edge.points[0].y == unions[union_id].y
+    assert [node.occurrence_id for node in layout.person_nodes].count(
+        tree.root_occurrence_id
+    ) == 1
+    assert_edges_are_orthogonal_and_avoid_cards(layout)
+
+
+def test_three_central_unions_remain_modelled_without_the_v3_couple_convention():
+    tree = build_combined_tree(
+        central_union_genealogy(3),
+        CombinedTreeOptions("@R@", 0, 1, show_siblings=False),
+    )
+    layout = layout_combined_tree(tree)
+
+    assert len(tree.central_family_core.union_occurrence_ids) == 3
+    assert len(layout.union_nodes) == 3
+    assert [node.occurrence_id for node in layout.person_nodes].count(
+        tree.root_occurrence_id
+    ) == 1
+    assert_edges_are_orthogonal_and_avoid_cards(layout)

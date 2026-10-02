@@ -17,6 +17,11 @@ class TreeLayoutConfiguration:
     sibling_gap: float = 32.0
     family_gap: float = 48.0
     union_vertical_offset: float = 36.0
+    descendant_partner_gap: float = 24.0
+    descendant_union_gap: float = 20.0
+    descendant_child_gap: float = 36.0
+    descendant_route_gap: float = 12.0
+    central_root_exit_offset: float = 40.0
     padding: float = 40.0
 
     def __post_init__(self) -> None:
@@ -28,6 +33,11 @@ class TreeLayoutConfiguration:
             "sibling_gap",
             "family_gap",
             "union_vertical_offset",
+            "descendant_partner_gap",
+            "descendant_union_gap",
+            "descendant_child_gap",
+            "descendant_route_gap",
+            "central_root_exit_offset",
             "padding",
         ):
             if getattr(self, name) < 0:
@@ -36,6 +46,8 @@ class TreeLayoutConfiguration:
             raise ValueError("person dimensions must be greater than zero")
         if self.union_vertical_offset > self.generation_gap:
             raise ValueError("union_vertical_offset must fit within generation_gap")
+        if self.central_root_exit_offset > self.person_width / 2:
+            raise ValueError("central_root_exit_offset must fit within the root card")
 
 
 @dataclass(frozen=True)
@@ -154,21 +166,39 @@ def layout_combined_tree(
         child = people[occurrence_id]
         return union_id if union.generation < child.generation else None
 
+    def descendant_owner_for(union_id: str) -> str | None:
+        union = unions[union_id]
+        prefix = "union:"
+        suffix = f":family:{union.family_id}"
+        if not union.id.startswith(prefix) or not union.id.endswith(suffix):
+            return None
+        occurrence_id = union.id[len(prefix):-len(suffix)]
+        return occurrence_id if occurrence_id in people else None
+
     def descendant_unions_for(occurrence_id: str) -> list[str]:
         occurrence = people[occurrence_id]
-        if is_layout_leaf(occurrence):
+        if is_layout_leaf(occurrence) or occurrence.generation < 0:
             return []
         return [
             union.id
             for union in tree.union_occurrences
             if union.id not in core_union_set
             and union.generation == occurrence.generation
-            and any(partner.occurrence_id == occurrence_id for partner in union.partners)
+            and descendant_owner_for(union.id) == occurrence_id
         ]
 
     def merge(target: _MeasuredSubtree, source: _MeasuredSubtree) -> None:
         target.person_x.update(source.person_x)
         target.union_x.update(source.union_x)
+
+    descendant_pivot_by_union = {
+        union_id: owner_id
+        for union_id in (union.id for union in tree.union_occurrences)
+        if union_id not in core_union_set
+        and (owner_id := descendant_owner_for(union_id)) is not None
+        and people[owner_id].generation >= 0
+    }
+    vertical_descendant_union_ids = set(descendant_pivot_by_union)
 
     def measure_ancestry(occurrence_id: str) -> _MeasuredSubtree:
         parent_union_id = parent_union_for(occurrence_id)
@@ -207,57 +237,88 @@ def layout_combined_tree(
         return result
 
     def measure_descendancy(occurrence_id: str) -> _MeasuredSubtree:
-        """Measure a non-central descendant branch with its local marriage band."""
+        """Measure one descendant and independent envelopes for their families.
+
+        Each partner is placed inside their own family envelope below the
+        descendant. Consequently, multiple partners do not consume a shared
+        horizontal strip to the right of the pivot.
+        """
 
         owned_unions = descendant_unions_for(occurrence_id)
-        root_x = config.person_width / 2
-        result = _MeasuredSubtree(
-            root_occurrence_id=occurrence_id,
-            width=config.person_width,
-            root_x=root_x,
-            person_x={occurrence_id: root_x},
-        )
+        if not owned_unions:
+            root_x = config.person_width / 2
+            return _MeasuredSubtree(
+                root_occurrence_id=occurrence_id,
+                width=config.person_width,
+                root_x=root_x,
+                person_x={occurrence_id: root_x},
+            )
 
-        partner_slot = 0
-        pair_right = config.person_width
+        families: list[tuple[str, list[_MeasuredSubtree], float, float]] = []
         for union_id in owned_unions:
             union = unions[union_id]
+            child_measures = [
+                measure_descendancy(child_id)
+                for child_id in children_by_union.get(union_id, [])
+            ]
+            children_width = (
+                sum(child.width for child in child_measures)
+                + config.sibling_gap * max(0, len(child_measures) - 1)
+            )
+            other_partner_count = sum(
+                partner.occurrence_id != occurrence_id
+                for partner in union.partners
+            )
+            partners_width = (
+                other_partner_count * config.person_width
+                + config.partner_gap * max(0, other_partner_count - 1)
+            )
+            family_width = max(config.person_width, children_width, partners_width)
+            families.append((union_id, child_measures, children_width, family_width))
+
+        total_width = (
+            sum(family_width for _, _, _, family_width in families)
+            + config.family_gap * (len(families) - 1)
+        )
+        result = _MeasuredSubtree(
+            root_occurrence_id=occurrence_id,
+            width=total_width,
+            root_x=0.0,
+        )
+
+        cursor = 0.0
+        family_centers: list[float] = []
+        for union_id, child_measures, children_width, family_width in families:
+            union = unions[union_id]
+            family_center = cursor + family_width / 2
+            family_centers.append(family_center)
+            result.union_x[union_id] = family_center
+
             other_partners = [
                 partner.occurrence_id
                 for partner in union.partners
                 if partner.occurrence_id != occurrence_id
             ]
             if other_partners:
-                first_partner_x: float | None = None
+                partners_width = (
+                    len(other_partners) * config.person_width
+                    + config.partner_gap * (len(other_partners) - 1)
+                )
+                partner_cursor = family_center - partners_width / 2
                 for partner_id in other_partners:
-                    partner_slot += 1
-                    partner_x = root_x + partner_slot * (
-                        config.person_width + config.partner_gap
+                    result.person_x[partner_id] = (
+                        partner_cursor + config.person_width / 2
                     )
-                    result.person_x[partner_id] = partner_x
-                    pair_right = max(pair_right, partner_x + config.person_width / 2)
-                    if first_partner_x is None:
-                        first_partner_x = partner_x
-                result.union_x[union_id] = (root_x + first_partner_x) / 2
-            else:
-                result.union_x[union_id] = root_x
+                    partner_cursor += config.person_width + config.partner_gap
 
-        child_cursor = 0.0
-        for union_id in owned_unions:
-            child_measures = [
-                measure_descendancy(child_id)
-                for child_id in children_by_union.get(union_id, [])
-            ]
+            child_cursor = family_center - children_width / 2
             for child_measure in child_measures:
-                placed = child_measure.shifted(child_cursor)
-                merge(result, placed)
+                merge(result, child_measure.shifted(child_cursor))
                 child_cursor += child_measure.width + config.sibling_gap
-            if child_measures:
-                child_cursor -= config.sibling_gap
-                child_cursor += config.family_gap
+            cursor += family_width + config.family_gap
 
-        children_right = child_cursor - config.family_gap if child_cursor > 0 else 0.0
-        result.width = max(pair_right, children_right)
+        result.root_x = (family_centers[0] + family_centers[-1]) / 2
+        result.person_x[occurrence_id] = result.root_x
         return result
 
     # The central band is intentionally local: broad ancestor or child forests
@@ -372,108 +433,292 @@ def layout_combined_tree(
     max_x = max(value + config.person_width / 2 for value in person_x.values())
     x_offset = config.padding - min_x
     min_generation = min(occurrence.generation for occurrence in people.values())
+    zero_generation_y = config.padding + (-min_generation) * (
+        config.person_height + config.generation_gap
+    )
+    descendant_generation_step = (
+        2 * config.person_height
+        + config.descendant_partner_gap
+        + config.descendant_union_gap
+        + config.descendant_child_gap
+    )
 
-    def person_y(occurrence: TreePersonOccurrence) -> float:
-        return config.padding + (
-            occurrence.generation - min_generation
-        ) * (config.person_height + config.generation_gap)
+    def main_person_y(occurrence: TreePersonOccurrence) -> float:
+        if occurrence.generation <= 0:
+            return config.padding + (
+                occurrence.generation - min_generation
+            ) * (config.person_height + config.generation_gap)
+        return zero_generation_y + (
+            config.person_height + config.generation_gap
+        ) + (occurrence.generation - 1) * descendant_generation_step
+
+    person_y_by_id = {
+        occurrence.id: main_person_y(occurrence)
+        for occurrence in tree.person_occurrences
+    }
+    union_y_by_id: dict[str, float] = {}
+    for union_id in sorted(
+        vertical_descendant_union_ids,
+        key=lambda item: (unions[item].generation, item),
+    ):
+        union = unions[union_id]
+        pivot_id = descendant_pivot_by_union[union_id]
+        pivot_y = person_y_by_id[pivot_id]
+        for partner in union.partners:
+            if partner.occurrence_id != pivot_id:
+                person_y_by_id[partner.occurrence_id] = (
+                    pivot_y + config.person_height + config.descendant_partner_gap
+                )
+        union_y = max(
+            person_y_by_id[partner.occurrence_id] + config.person_height
+            for partner in union.partners
+        ) + config.descendant_union_gap
+        union_y_by_id[union_id] = union_y
+        for child_id in children_by_union.get(union_id, []):
+            person_y_by_id[child_id] = union_y + config.descendant_child_gap
+
+    for union in tree.union_occurrences:
+        if union.id not in union_y_by_id:
+            union_y_by_id[union.id] = (
+                person_y_by_id[union.partners[0].occurrence_id]
+                + config.person_height
+                + config.union_vertical_offset
+            )
 
     person_nodes = tuple(
         PersonLayoutNode(
             occurrence_id=occurrence.id,
             x=person_x[occurrence.id] + x_offset - config.person_width / 2,
-            y=person_y(occurrence),
+            y=person_y_by_id[occurrence.id],
             width=config.person_width,
             height=config.person_height,
         )
         for occurrence in tree.person_occurrences
     )
     person_nodes_by_id = {node.occurrence_id: node for node in person_nodes}
+    central_convention_union_ids = (
+        set(core_union_ids) if len(core_union_ids) <= 2 else set()
+    )
+    central_bar_y_by_union: dict[str, float] = {}
+    central_root_exit_x_by_union: dict[str, float] = {}
+    if central_convention_union_ids:
+        root_node = person_nodes_by_id[root_id]
+        root_center_x = root_node.x + root_node.width / 2
+        couple_y = max(
+            person_nodes_by_id[partner.occurrence_id].y + config.person_height
+            for union_id in core_union_ids
+            for partner in unions[union_id].partners
+        ) + config.union_vertical_offset
+        for union_id in core_union_ids:
+            central_bar_y_by_union[union_id] = couple_y
+        if len(core_union_ids) == 1:
+            central_root_exit_x_by_union[core_union_ids[0]] = root_center_x
+        elif len(core_union_ids) == 2:
+            left_union_id, right_union_id = sorted(
+                core_union_ids,
+                key=lambda union_id: union_x[union_id],
+            )
+            central_root_exit_x_by_union[left_union_id] = (
+                root_center_x - config.central_root_exit_offset
+            )
+            central_root_exit_x_by_union[right_union_id] = (
+                root_center_x + config.central_root_exit_offset
+            )
+
     union_nodes = tuple(
         UnionLayoutNode(
             union_occurrence_id=union.id,
             x=union_x[union.id] + x_offset,
             y=(
-                person_y(people[union.partners[0].occurrence_id])
-                + config.person_height
-                + config.union_vertical_offset
+                central_bar_y_by_union[union.id]
+                if union.id in central_convention_union_ids
+                else (
+                    person_y_by_id[descendant_pivot_by_union[union.id]]
+                    + config.person_height
+                    + config.descendant_partner_gap / 2
+                    if union.id in vertical_descendant_union_ids
+                    else union_y_by_id[union.id]
+                )
             ),
         )
         for union in tree.union_occurrences
     )
     union_nodes_by_id = {node.union_occurrence_id: node for node in union_nodes}
+    central_descendant_drop_x_by_union: dict[str, float] = {}
+    for union_id in central_convention_union_ids:
+        root_anchor_x = central_root_exit_x_by_union[union_id]
+        other_partner_anchor_xs = [
+            person_nodes_by_id[partner.occurrence_id].x
+            + person_nodes_by_id[partner.occurrence_id].width / 2
+            for partner in unions[union_id].partners
+            if partner.occurrence_id != root_id
+        ]
+        central_descendant_drop_x_by_union[union_id] = (
+            (root_anchor_x + other_partner_anchor_xs[0]) / 2
+            if other_partner_anchor_xs
+            else root_anchor_x
+        )
 
-    # Reserve a deterministic track in the free band below a person's card
-    # when that occurrence participates in several unions. Every partner of
-    # one union uses the same track; a distant union's horizontal run can then
-    # pass above the other union nodes without touching a card.
+    # Reserve deterministic tracks for unions that preserve the horizontal
+    # central/ancestral grammar. Descendant unions use their own vertical
+    # family envelopes below.
     unions_by_partner: dict[str, list[str]] = {}
     for union in tree.union_occurrences:
         for partner in union.partners:
             unions_by_partner.setdefault(partner.occurrence_id, []).append(union.id)
+    vertical_unions_by_pivot: dict[str, list[str]] = {}
+    for union_id, pivot_id in descendant_pivot_by_union.items():
+        vertical_unions_by_pivot.setdefault(pivot_id, []).append(union_id)
 
     edges: list[LayoutEdge] = []
     for union in tree.union_occurrences:
         union_node = union_nodes_by_id[union.id]
-        shared_partner = max(
-            union.partners,
-            key=lambda partner: len(unions_by_partner[partner.occurrence_id]),
-        )
-        shared_unions = unions_by_partner[shared_partner.occurrence_id]
-        track_index = shared_unions.index(union.id) + 1
-        track_count = len(shared_unions) + 1
-        for partner in union.partners:
-            person_node = person_nodes_by_id[partner.occurrence_id]
-            person_center_x = person_node.x + person_node.width / 2
-            person_bottom_y = person_node.y + person_node.height
-            if person_center_x == union_node.x:
-                points = (
-                    LayoutPoint(person_center_x, person_bottom_y),
-                    LayoutPoint(union_node.x, union_node.y),
+        if union.id in central_convention_union_ids:
+            for partner in union.partners:
+                person_node = person_nodes_by_id[partner.occurrence_id]
+                person_center_x = person_node.x + person_node.width / 2
+                person_bottom_y = person_node.y + person_node.height
+                start_x = (
+                    central_root_exit_x_by_union[union.id]
+                    if partner.occurrence_id == root_id
+                    else person_center_x
                 )
-            else:
-                track_y = person_bottom_y + (
-                    union_node.y - person_bottom_y
-                ) * track_index / track_count
-                points = (
-                    LayoutPoint(person_center_x, person_bottom_y),
-                    LayoutPoint(person_center_x, track_y),
-                    LayoutPoint(union_node.x, track_y),
-                    LayoutPoint(union_node.x, union_node.y),
+                if start_x == union_node.x:
+                    points = (
+                        LayoutPoint(start_x, person_bottom_y),
+                        LayoutPoint(union_node.x, union_node.y),
+                    )
+                else:
+                    points = (
+                        LayoutPoint(start_x, person_bottom_y),
+                        LayoutPoint(start_x, union_node.y),
+                        LayoutPoint(union_node.x, union_node.y),
+                    )
+                edges.append(
+                    LayoutEdge(
+                        kind=LayoutEdgeKind.PARTNER,
+                        union_occurrence_id=union.id,
+                        person_occurrence_id=partner.occurrence_id,
+                        points=points,
+                    )
                 )
-            edges.append(
-                LayoutEdge(
-                    kind=LayoutEdgeKind.PARTNER,
-                    union_occurrence_id=union.id,
-                    person_occurrence_id=partner.occurrence_id,
-                    points=points,
+        elif union.id in vertical_descendant_union_ids:
+            pivot_id = descendant_pivot_by_union[union.id]
+            other_partner_nodes = [
+                person_nodes_by_id[partner.occurrence_id]
+                for partner in union.partners
+                if partner.occurrence_id != pivot_id
+            ]
+
+            for partner in union.partners:
+                person_node = person_nodes_by_id[partner.occurrence_id]
+                person_center_x = person_node.x + person_node.width / 2
+                if partner.occurrence_id == pivot_id:
+                    person_bottom_y = person_node.y + person_node.height
+                    if person_center_x == union_node.x:
+                        points = (
+                            LayoutPoint(person_center_x, person_bottom_y),
+                            LayoutPoint(union_node.x, union_node.y),
+                        )
+                    else:
+                        points = (
+                            LayoutPoint(person_center_x, person_bottom_y),
+                            LayoutPoint(person_center_x, union_node.y),
+                            LayoutPoint(union_node.x, union_node.y),
+                        )
+                elif person_center_x == union_node.x:
+                    points = (
+                        LayoutPoint(union_node.x, union_node.y),
+                        LayoutPoint(person_center_x, person_node.y),
+                    )
+                else:
+                    points = (
+                        LayoutPoint(union_node.x, union_node.y),
+                        LayoutPoint(person_center_x, union_node.y),
+                        LayoutPoint(person_center_x, person_node.y),
+                    )
+                edges.append(
+                    LayoutEdge(
+                        kind=LayoutEdgeKind.PARTNER,
+                        union_occurrence_id=union.id,
+                        person_occurrence_id=partner.occurrence_id,
+                        points=points,
+                    )
                 )
+        else:
+            shared_partner = max(
+                union.partners,
+                key=lambda partner: len(unions_by_partner[partner.occurrence_id]),
             )
+            shared_unions = unions_by_partner[shared_partner.occurrence_id]
+            track_index = shared_unions.index(union.id) + 1
+            track_count = len(shared_unions) + 1
+            for partner in union.partners:
+                person_node = person_nodes_by_id[partner.occurrence_id]
+                person_center_x = person_node.x + person_node.width / 2
+                person_bottom_y = person_node.y + person_node.height
+                if person_center_x == union_node.x:
+                    points = (
+                        LayoutPoint(person_center_x, person_bottom_y),
+                        LayoutPoint(union_node.x, union_node.y),
+                    )
+                else:
+                    track_y = person_bottom_y + (
+                        union_node.y - person_bottom_y
+                    ) * track_index / track_count
+                    points = (
+                        LayoutPoint(person_center_x, person_bottom_y),
+                        LayoutPoint(person_center_x, track_y),
+                        LayoutPoint(union_node.x, track_y),
+                        LayoutPoint(union_node.x, union_node.y),
+                    )
+                edges.append(
+                    LayoutEdge(
+                        kind=LayoutEdgeKind.PARTNER,
+                        union_occurrence_id=union.id,
+                        person_occurrence_id=partner.occurrence_id,
+                        points=points,
+                    )
+                )
 
         child_ids = children_by_union.get(union.id, [])
+        if union.id in vertical_descendant_union_ids:
+            child_origin = (
+                other_partner_nodes[0]
+                if other_partner_nodes
+                else person_nodes_by_id[descendant_pivot_by_union[union.id]]
+            )
+            child_origin_x = child_origin.x + child_origin.width / 2
+            child_origin_y = child_origin.y + child_origin.height
+        elif union.id in central_convention_union_ids:
+            child_origin_x = central_descendant_drop_x_by_union[union.id]
+            child_origin_y = union_node.y
+        else:
+            child_origin_x = union_node.x
+            child_origin_y = union_node.y
         if child_ids:
             bus_y = (
-                union_node.y
+                child_origin_y
                 + min(person_nodes_by_id[child_id].y for child_id in child_ids)
             ) / 2
         for child_id in child_ids:
             child_node = person_nodes_by_id[child_id]
             child_center_x = child_node.x + child_node.width / 2
-            if child_center_x == union_node.x and len(child_ids) == 1:
+            if child_center_x == child_origin_x and len(child_ids) == 1:
                 points = (
-                    LayoutPoint(union_node.x, union_node.y),
+                    LayoutPoint(child_origin_x, child_origin_y),
                     LayoutPoint(child_center_x, child_node.y),
                 )
-            elif child_center_x == union_node.x:
+            elif child_center_x == child_origin_x:
                 points = (
-                    LayoutPoint(union_node.x, union_node.y),
-                    LayoutPoint(union_node.x, bus_y),
+                    LayoutPoint(child_origin_x, child_origin_y),
+                    LayoutPoint(child_origin_x, bus_y),
                     LayoutPoint(child_center_x, child_node.y),
                 )
             else:
                 points = (
-                    LayoutPoint(union_node.x, union_node.y),
-                    LayoutPoint(union_node.x, bus_y),
+                    LayoutPoint(child_origin_x, child_origin_y),
+                    LayoutPoint(child_origin_x, bus_y),
                     LayoutPoint(child_center_x, bus_y),
                     LayoutPoint(child_center_x, child_node.y),
                 )
