@@ -114,6 +114,9 @@ const treeChart =
 const treeDiagnostics =
     document.querySelector("#tree-diagnostics");
 
+const openTreeViewButton =
+    document.querySelector("#open-tree-view");
+
 let treeRequestSerial = 0;
 
 const fanLabelSosa =
@@ -218,6 +221,7 @@ importForm.addEventListener("submit", async (event) => {
         clearTreeChart(
             "Sélectionnez une personne pour afficher l’arbre.",
         );
+        openTreeViewButton.disabled = true;
 
     } catch (error) {
         importStatus.textContent = error.message;
@@ -427,6 +431,19 @@ for (const control of [
     });
 }
 
+openTreeViewButton.addEventListener("click", () => {
+    if (selectedPersonId === null) {
+        return;
+    }
+    const query = new URLSearchParams({
+        person_id: selectedPersonId,
+        ancestor_generations: treeAncestorGenerations.value,
+        descendant_generations: treeDescendantGenerations.value,
+        show_siblings: String(treeShowSiblings.checked),
+    });
+    window.open(`/tree-view?${query.toString()}`, "_blank", "noopener");
+});
+
 fanOpening.addEventListener("input", () => {
     fanOpeningValue.textContent =
         `${fanOpening.value}°`;
@@ -468,6 +485,7 @@ function renderSearchResults(people) {
             clearTreeChart(
                 "Chargement de l’arbre familial…",
             );
+            openTreeViewButton.disabled = false;
 
             const birth = person.birth_date
                 ? ` — naissance : ${person.birth_date}`
@@ -851,7 +869,7 @@ async function loadTreeChart(personId) {
             );
         }
 
-        renderTreeChart(tree);
+        renderTree(treeChart, tree);
         treeStatus.textContent =
             `${tree.person_occurrences.length} occurrences`;
 
@@ -870,73 +888,6 @@ async function loadTreeChart(personId) {
 }
 
 
-function renderTreeChart(tree) {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const {bounds} = tree.layout;
-    const occurrencesById = new Map(
-        tree.person_occurrences.map(occurrence => [occurrence.id, occurrence]),
-    );
-
-    treeChart.innerHTML = "";
-    treeChart.setAttribute(
-        "viewBox",
-        `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`,
-    );
-
-    // Preserve this z-order: edges, cards, then labels.
-    for (const edge of tree.layout.edges) {
-        const polyline = document.createElementNS(svgNS, "polyline");
-        polyline.setAttribute(
-            "points",
-            edge.points.map(point => `${point.x},${point.y}`).join(" "),
-        );
-        polyline.setAttribute("class", "tree-edge");
-        treeChart.appendChild(polyline);
-    }
-
-    for (const node of tree.layout.person_nodes) {
-        const rectangle = document.createElementNS(svgNS, "rect");
-        rectangle.setAttribute("x", node.x);
-        rectangle.setAttribute("y", node.y);
-        rectangle.setAttribute("width", node.width);
-        rectangle.setAttribute("height", node.height);
-        rectangle.setAttribute("rx", "4");
-        rectangle.setAttribute("class", "tree-person-card");
-        treeChart.appendChild(rectangle);
-    }
-
-    for (const node of tree.layout.person_nodes) {
-        const occurrence = occurrencesById.get(node.occurrence_id);
-        const text = document.createElementNS(svgNS, "text");
-        text.setAttribute("x", node.x + node.width / 2);
-        text.setAttribute("y", node.y + node.height / 2);
-        text.setAttribute("class", "tree-person-label");
-        text.setAttribute("text-anchor", "middle");
-        text.setAttribute("dominant-baseline", "middle");
-
-        const lines = treePersonLabelLines(occurrence);
-        const firstLineY = -(lines.length - 1) * 8;
-        for (const [index, line] of lines.entries()) {
-            const span = document.createElementNS(svgNS, "tspan");
-            span.setAttribute("x", node.x + node.width / 2);
-            span.setAttribute("dy", index === 0 ? firstLineY : 16);
-            span.textContent = line;
-            text.appendChild(span);
-        }
-        treeChart.appendChild(text);
-    }
-}
-
-
-function treePersonLabelLines(occurrence) {
-    if (occurrence === undefined || occurrence.person_id === null) {
-        return ["?"];
-    }
-
-    const lines = [occurrence.given_names, occurrence.surname]
-        .filter(value => value !== null && value.trim() !== "");
-    return lines.length > 0 ? lines : ["?"];
-}
 
 
 async function loadFanChart(personId) {

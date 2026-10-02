@@ -1,0 +1,44 @@
+.tree-view-page {
+    background: #f5f5f5;
+}
+
+.tree-view-header {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #ddd;
+    background: white;
+}
+
+.tree-view-header h1 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.tree-view-header .status {
+    margin: 0.35rem 0 0;
+}
+
+#tree-view-diagnostics {
+    margin: 0.35rem 0 0;
+    color: #7a4d00;
+}
+
+#tree-view-container {
+    box-sizing: border-box;
+    width: 100vw;
+    max-width: none;
+    height: calc(100vh - 92px);
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    background: #fafafa;
+}
+
+#tree-view-chart {
+    display: block;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    background: white;
+}

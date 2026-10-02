@@ -134,6 +134,27 @@ class TreePersonOccurrenceResponse(BaseModel):
     sex: str | None
 
 
+class PortraitReferenceResponse(BaseModel):
+    url: str
+    kind: str
+
+
+class TreePersonCardResponse(BaseModel):
+    occurrence_id: str
+    person_id: str | None
+    is_unknown: bool
+    sex: str | None
+    given_names: str | None
+    display_given_name: str | None
+    surname: str | None
+    display_surname: str | None
+    birth_date: str | None
+    display_birth_date: str | None
+    death_date: str | None
+    display_death_date: str | None
+    portrait: PortraitReferenceResponse
+
+
 class TreeUnionPartnerResponse(BaseModel):
     occurrence_id: str
     role: str
@@ -234,6 +255,7 @@ class CombinedTreeResponse(BaseModel):
     options: CombinedTreeOptionsResponse
     central_family_core: TreeCentralFamilyCoreResponse
     person_occurrences: list[TreePersonOccurrenceResponse]
+    person_cards: list[TreePersonCardResponse]
     union_occurrences: list[TreeUnionOccurrenceResponse]
     parent_child_links: list[TreeParentChildLinkResponse]
     diagnostics: list[TreeDiagnosticResponse]

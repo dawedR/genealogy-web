@@ -47,6 +47,8 @@ from src.api.schemas import (
     LayoutEdgeResponse,
     LayoutPointResponse,
     PersonLayoutNodeResponse,
+    PortraitReferenceResponse,
+    TreePersonCardResponse,
     TreeParentChildLinkResponse,
     TreeLayoutResponse,
     TreePersonOccurrenceResponse,
@@ -97,7 +99,10 @@ from src.services.geocoding import (
 from src.services.geoapify import GeoapifyGeocoder
 from src.services.places import inventory_places
 from src.services.sosa import build_sosa_ancestry
+from src.services.portraits import PortraitResolver
+from src.services.tree_cards import build_tree_person_card
 from src.services.tree_layout import TreeLayout, layout_combined_tree
+from src.services.tree_view import PORTRAIT_TREE_LAYOUT_CONFIGURATION
 from src.storage.place_enrichments import (
     InMemoryPlaceEnrichmentStore,
     JsonPlaceEnrichmentStore,
@@ -149,12 +154,17 @@ def create_app(
     genealogy: Genealogy | None = None,
     place_enrichment_store: PlaceEnrichmentStore | None = None,
     geocoder: Geocoder | None = None,
+    portrait_resolver: PortraitResolver | None = None,
 ) -> FastAPI:
     initial_genealogy = genealogy or Genealogy()
     initial_place_enrichment_store = (
         place_enrichment_store or InMemoryPlaceEnrichmentStore()
     )
     initial_geocoder = geocoder or UnavailableGeocoder()
+    initial_portrait_resolver = portrait_resolver or PortraitResolver(
+        registry_path=Path("data/portraits.json"),
+        portraits_root=Path("data/portraits"),
+    )
     pending_geocoding_candidates = _PendingGeocodingCandidates()
 
     @asynccontextmanager
@@ -163,6 +173,7 @@ def create_app(
         app.state.place_enrichment_store = initial_place_enrichment_store
         app.state.geocoder = initial_geocoder
         app.state.pending_geocoding_candidates = pending_geocoding_candidates
+        app.state.portrait_resolver = initial_portrait_resolver
         yield
 
     app = FastAPI(
@@ -182,6 +193,14 @@ def create_app(
         StaticFiles(directory=web_root),
         name="static",
     )
+    app.mount(
+        "/portraits",
+        StaticFiles(
+            directory=initial_portrait_resolver.portraits_root,
+            check_dir=False,
+        ),
+        name="portraits",
+    )
 
     @app.get(
         "/",
@@ -190,6 +209,13 @@ def create_app(
     
     def index() -> FileResponse:
         return FileResponse(web_root / "index.html")
+
+    @app.get(
+        "/tree-view",
+        include_in_schema=False,
+    )
+    def tree_view() -> FileResponse:
+        return FileResponse(web_root / "tree_view.html")
 
     @app.get(
         "/health",
@@ -510,7 +536,8 @@ def create_app(
         return _combined_tree_response(
             projection,
             current,
-            layout_combined_tree(projection),
+            layout_combined_tree(projection, PORTRAIT_TREE_LAYOUT_CONFIGURATION),
+            initial_portrait_resolver,
         )
 
     @app.get(
@@ -640,6 +667,7 @@ def _combined_tree_response(
     projection,
     genealogy: Genealogy,
     layout: TreeLayout,
+    portraits: PortraitResolver,
 ) -> CombinedTreeResponse:
     return CombinedTreeResponse(
         root_occurrence_id=projection.root_occurrence_id,
@@ -656,6 +684,12 @@ def _combined_tree_response(
         ),
         person_occurrences=[
             _tree_person_occurrence_response(occurrence, genealogy)
+            for occurrence in projection.person_occurrences
+        ],
+        person_cards=[
+            _tree_person_card_response(
+                build_tree_person_card(occurrence, genealogy, portraits)
+            )
             for occurrence in projection.person_occurrences
         ],
         union_occurrences=[
@@ -749,6 +783,27 @@ def _tree_person_occurrence_response(
         given_names=person.given_names if person is not None else None,
         surname=person.surname if person is not None else None,
         sex=person.sex.value if person is not None else None,
+    )
+
+
+def _tree_person_card_response(card) -> TreePersonCardResponse:
+    return TreePersonCardResponse(
+        occurrence_id=card.occurrence_id,
+        person_id=card.person_id,
+        is_unknown=card.is_unknown,
+        sex=card.sex.value if card.sex is not None else None,
+        given_names=card.given_names,
+        display_given_name=card.display_given_name,
+        surname=card.surname,
+        display_surname=card.display_surname,
+        birth_date=card.birth_date,
+        display_birth_date=card.display_birth_date,
+        death_date=card.death_date,
+        display_death_date=card.display_death_date,
+        portrait=PortraitReferenceResponse(
+            url=card.portrait.url,
+            kind=card.portrait.kind.value,
+        ),
     )
 
 

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Arbre familial — Genealogy Web</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/tree_view.css">
+</head>
+<body class="tree-view-page">
+    <header class="tree-view-header">
+        <h1 id="tree-view-title">Arbre familial</h1>
+        <p id="tree-view-status" class="status">Chargement de l’arbre familial…</p>
+        <p id="tree-view-diagnostics" hidden></p>
+    </header>
+    <main id="tree-view-container">
+        <svg
+            id="tree-view-chart"
+            viewBox="0 0 1 1"
+            role="img"
+            aria-label="Arbre familial"
+        ></svg>
+    </main>
+    <script src="/static/tree_renderer.js"></script>
+    <script src="/static/tree_view.js"></script>
+</body>
+</html>

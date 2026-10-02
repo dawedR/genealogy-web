@@ -4,7 +4,9 @@ from fastapi.testclient import TestClient
 
 from src.api.app import create_app
 from src.services.combined_tree import CombinedTreeOptions, build_combined_tree
+from src.services.portraits import PortraitResolver
 from src.services.tree_layout import layout_combined_tree
+from src.services.tree_view import PORTRAIT_TREE_LAYOUT_CONFIGURATION
 from src.domain.models import (
     Event,
     Family,
@@ -1235,33 +1237,77 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     with make_client() as client:
         response = client.get("/")
         javascript = client.get("/static/app.js")
+        renderer = client.get("/static/tree_renderer.js")
 
     assert response.status_code == 200
     assert javascript.status_code == 200
+    assert renderer.status_code == 200
     for element_id in (
         "tree-ancestor-generations",
         "tree-descendant-generations",
         "tree-show-siblings",
         "tree-chart",
         "tree-diagnostics",
+        "open-tree-view",
     ):
         assert f'id="{element_id}"' in response.text
     assert 'id="tree-ancestor-generations"' in response.text
     assert 'min="0"' in response.text
     assert 'max="10"' in response.text
     assert 'loadTreeChart(person.id);' in javascript.text
-    assert 'tree.layout.person_nodes' in javascript.text
-    assert 'tree.layout.edges' in javascript.text
-    assert 'tree.layout.union_nodes' not in javascript.text
-    assert 'tree-union' not in javascript.text
-    assert '`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`' in javascript.text
-    assert 'edge.points.map(point => `${point.x},${point.y}`).join(" ")' in javascript.text
-    assert 'for (const edge of tree.layout.edges)' in javascript.text
-    assert 'for (const node of tree.layout.person_nodes)' in javascript.text
+    assert 'renderTree(treeChart, tree);' in javascript.text
+    assert 'window.open(`/tree-view?${query.toString()}`, "_blank", "noopener")' in javascript.text
+    assert 'new URLSearchParams({' in javascript.text
+    assert 'edge.points.map' not in javascript.text
+    assert 'tree.layout.person_nodes' not in javascript.text
+    assert 'tree.layout.edges' not in javascript.text
     assert 'treeRequestSerial' in javascript.text
     assert 'layout_combined_tree' not in javascript.text
     assert 'parent_child_links' not in javascript.text
     assert 'central_family_core' not in javascript.text
+
+    assert 'function renderTree(svgElement, tree, options = {})' in renderer.text
+    assert 'tree.person_cards.map' in renderer.text
+    assert 'card.portrait.url' in renderer.text
+    assert 'display_given_name' in renderer.text
+    assert 'display_surname' in renderer.text
+    assert 'display_birth_date' in renderer.text
+    assert 'display_death_date' in renderer.text
+    assert 'preserveAspectRatio", "xMidYMid slice' in renderer.text
+    assert 'tree.layout.union_nodes' not in renderer.text
+    assert 'tree-union' not in renderer.text
+    assert '`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`' in renderer.text
+    assert 'edge.points.map(point => `${point.x},${point.y}`).join(" ")' in renderer.text
+    assert 'for (const edge of tree.layout.edges)' in renderer.text
+    assert 'for (const node of tree.layout.person_nodes)' in renderer.text
+    assert 'layout_combined_tree' not in renderer.text
+    assert 'parent_child_links' not in renderer.text
+
+
+def test_dedicated_tree_view_uses_the_shared_renderer_and_natural_svg_size():
+    with make_client() as client:
+        page = client.get(
+            "/tree-view?person_id=%40I1%40&ancestor_generations=2&descendant_generations=2&show_siblings=false"
+        )
+        javascript = client.get("/static/tree_view.js")
+        stylesheet = client.get("/static/tree_view.css")
+
+    assert page.status_code == 200
+    assert javascript.status_code == 200
+    assert stylesheet.status_code == 200
+    assert 'id="tree-view-chart"' in page.text
+    assert '/static/tree_renderer.js' in page.text
+    assert 'new URLSearchParams(window.location.search)' in javascript.text
+    assert 'parseTreeViewOptions' in javascript.text
+    assert 'encodeURIComponent(options.personId)' in javascript.text
+    assert 'renderTree(treeViewChart, tree, {naturalSize: true});' in javascript.text
+    assert 'layout_combined_tree' not in javascript.text
+    assert 'parent_child_links' not in javascript.text
+    assert '#tree-view-chart' in stylesheet.text
+    assert 'width: auto;' in stylesheet.text
+    assert 'min-width: 0;' in stylesheet.text
+    assert 'max-width: none;' in stylesheet.text
+    assert 'padding: 0;' in stylesheet.text
 
 
 def tree_api_genealogy() -> Genealogy:
@@ -1289,6 +1335,38 @@ def tree_api_genealogy() -> Genealogy:
                 children=["@C@"],
             ),
         },
+    )
+
+
+def test_tree_endpoint_exposes_person_cards_consumed_by_the_renderer():
+    with TestClient(create_app(tree_api_genealogy())) as client:
+        response = client.get(
+            "/people/@R@/tree",
+            params={
+                "ancestor_generations": 1,
+                "descendant_generations": 1,
+                "show_siblings": "false",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data["person_cards"], list)
+    assert {
+        card["occurrence_id"] for card in data["person_cards"]
+    } == {
+        occurrence["id"] for occurrence in data["person_occurrences"]
+    }
+    assert all(
+        {
+            "display_given_name",
+            "display_surname",
+            "display_birth_date",
+            "display_death_date",
+            "portrait",
+        } <= card.keys()
+        and {"url", "kind"} <= card["portrait"].keys()
+        for card in data["person_cards"]
     )
 
 
@@ -1342,7 +1420,8 @@ def test_tree_endpoint_serializes_simple_projection_and_person_details():
         build_combined_tree(
             tree_api_genealogy(),
             CombinedTreeOptions("@R@", 1, 1, show_siblings=False),
-        )
+        ),
+        PORTRAIT_TREE_LAYOUT_CONFIGURATION,
     )
     assert layout["bounds"] == {
         "x": expected_layout.bounds.x,
@@ -1361,6 +1440,23 @@ def test_tree_endpoint_serializes_simple_projection_and_person_details():
         occurrence["id"] for occurrence in data["union_occurrences"]
     }
     assert all(edge["points"] for edge in layout["edges"])
+    assert {(node["width"], node["height"]) for node in layout["person_nodes"]} == {
+        (160.0, 220.0)
+    }
+    assert {
+        card["occurrence_id"] for card in data["person_cards"]
+    } == {
+        occurrence["id"] for occurrence in data["person_occurrences"]
+    }
+    root_card = next(card for card in data["person_cards"] if card["occurrence_id"] == "person:root")
+    assert root_card["given_names"] == "Racine"
+    assert root_card["display_given_name"] == "Racine"
+    assert root_card["surname"] == "Test"
+    assert root_card["display_surname"] == "TEST"
+    assert root_card["portrait"] == {
+        "url": "/static/portraits/fallback-male.svg",
+        "kind": "FALLBACK_MALE",
+    }
     person_ids = {item["id"] for item in data["person_occurrences"]}
     union_ids = {item["id"] for item in data["union_occurrences"]}
     assert all(
@@ -1368,6 +1464,38 @@ def test_tree_endpoint_serializes_simple_projection_and_person_details():
         and edge["person_occurrence_id"] in person_ids
         for edge in layout["edges"]
     )
+
+
+def test_tree_endpoint_serves_registered_personal_portraits(tmp_path):
+    root = tmp_path / "portraits"
+    root.mkdir()
+    (root / "racine.jpg").write_bytes(b"jpeg portrait")
+    registry = tmp_path / "portraits.json"
+    registry.write_text('{"@R@": "racine.jpg"}', encoding="utf-8")
+    resolver = PortraitResolver(registry, root)
+
+    with TestClient(create_app(tree_api_genealogy(), portrait_resolver=resolver)) as client:
+        response = client.get(
+            "/people/@R@/tree",
+            params={
+                "ancestor_generations": 0,
+                "descendant_generations": 0,
+                "show_siblings": "false",
+            },
+        )
+        portrait = client.get("/portraits/racine.jpg")
+
+    assert response.status_code == 200
+    root_card = next(
+        card for card in response.json()["person_cards"]
+        if card["occurrence_id"] == "person:root"
+    )
+    assert root_card["portrait"] == {
+        "url": "/portraits/racine.jpg",
+        "kind": "PERSON",
+    }
+    assert portrait.status_code == 200
+    assert portrait.content == b"jpeg portrait"
 
 
 def test_tree_endpoint_honours_independent_depths_and_sibling_option():
@@ -1469,6 +1597,12 @@ def test_tree_endpoint_serializes_unknown_and_broken_parent_references():
     assert unknown_father["missing_person_id"] is None
     assert unknown_father["given_names"] is None
     assert unknown_response.json()["diagnostics"] == []
+    unknown_card = next(
+        card for card in unknown_response.json()["person_cards"]
+        if card["occurrence_id"] == unknown_father["id"]
+    )
+    assert unknown_card["is_unknown"] is True
+    assert unknown_card["portrait"]["kind"] == "FALLBACK_UNKNOWN"
 
     broken_father = next(item for item in broken_response.json()["person_occurrences"] if item["id"].endswith(":father"))
     assert broken_father["person_id"] is None
@@ -1480,6 +1614,12 @@ def test_tree_endpoint_serializes_unknown_and_broken_parent_references():
         "role": "FATHER",
         "occurrence_id": broken_father["id"],
     }]
+    broken_card = next(
+        card for card in broken_response.json()["person_cards"]
+        if card["occurrence_id"] == broken_father["id"]
+    )
+    assert broken_card["is_unknown"] is True
+    assert broken_card["portrait"]["kind"] == "FALLBACK_UNKNOWN"
 
 
 def test_tree_endpoint_serializes_cycle_diagnostic_and_is_deterministic():
@@ -1530,7 +1670,10 @@ def test_tree_endpoint_reports_missing_root_and_invalid_parameters():
 def test_tree_endpoint_transmits_every_orthogonal_layout_point_unchanged():
     genealogy = tree_api_genealogy()
     options = CombinedTreeOptions("@R@", 1, 1, show_siblings=False)
-    expected = layout_combined_tree(build_combined_tree(genealogy, options))
+    expected = layout_combined_tree(
+        build_combined_tree(genealogy, options),
+        PORTRAIT_TREE_LAYOUT_CONFIGURATION,
+    )
     with TestClient(create_app(genealogy)) as client:
         response = client.get(
             "/people/@R@/tree",

@@ -411,10 +411,22 @@ button {
     vector-effect: non-scaling-stroke;
 }
 
+.tree-portrait {
+    pointer-events: none;
+}
+
 .tree-person-label {
     fill: #202124;
-    font-size: 14px;
     pointer-events: none;
+}
+
+.tree-person-name {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.tree-person-date {
+    font-size: 11px;
 }
 
 #tree-diagnostics {
