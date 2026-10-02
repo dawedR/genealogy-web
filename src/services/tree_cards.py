@@ -86,7 +86,12 @@ def build_tree_person_card(
         display_birth_date=format_legacy_date(birth_date),
         death_date=death_date,
         display_death_date=format_legacy_date(death_date),
-        portrait=portraits.resolve(person.id, person.sex),
+        portrait=portraits.resolve(
+            person.id,
+            person.sex,
+            person=person,
+            genealogy=genealogy,
+        ),
     )
 
 

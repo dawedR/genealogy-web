@@ -157,6 +157,7 @@ def create_app(
     portrait_resolver: PortraitResolver | None = None,
 ) -> FastAPI:
     initial_genealogy = genealogy or Genealogy()
+    geneweb_portraits_dir = os.environ.get("GENEWEB_PORTRAITS_DIR")
     initial_place_enrichment_store = (
         place_enrichment_store or InMemoryPlaceEnrichmentStore()
     )
@@ -164,6 +165,9 @@ def create_app(
     initial_portrait_resolver = portrait_resolver or PortraitResolver(
         registry_path=Path("data/portraits.json"),
         portraits_root=Path("data/portraits"),
+        geneweb_portraits_root=(
+            Path(geneweb_portraits_dir) if geneweb_portraits_dir else None
+        ),
     )
     pending_geocoding_candidates = _PendingGeocodingCandidates()
 
@@ -201,6 +205,14 @@ def create_app(
         ),
         name="portraits",
     )
+
+
+    @app.get("/geneweb-portraits/{token}", include_in_schema=False)
+    def geneweb_portrait(token: str) -> FileResponse:
+        portrait = initial_portrait_resolver.geneweb_portrait(token)
+        if portrait is None:
+            raise HTTPException(status_code=404, detail="Portrait not found")
+        return FileResponse(portrait.path, media_type=portrait.media_type)
 
     @app.get(
         "/",

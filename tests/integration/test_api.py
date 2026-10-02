@@ -621,6 +621,19 @@ def test_static_javascript():
     assert "second.occurrencesCount - first.occurrencesCount" in response.text
 
 
+def test_static_portrait_fallback_assets_are_served():
+    with make_client() as client:
+        responses = {
+            filename: client.get(f"/static/portraits/{filename}")
+            for filename in ("fallback-male.png", "fallback-female.png", "fallback-unknown.svg")
+        }
+
+    assert all(response.status_code == 200 for response in responses.values())
+    assert responses["fallback-male.png"].headers["content-type"] == "image/png"
+    assert responses["fallback-female.png"].headers["content-type"] == "image/png"
+    assert responses["fallback-unknown.svg"].headers["content-type"] == "image/svg+xml"
+
+
 def test_static_javascript_loads_fan_chart_when_selecting_a_person():
     with make_client() as client:
         response = client.get("/static/app.js")
@@ -1305,9 +1318,20 @@ def test_dedicated_tree_view_uses_the_shared_renderer_and_natural_svg_size():
     assert 'parent_child_links' not in javascript.text
     assert '#tree-view-chart' in stylesheet.text
     assert 'width: auto;' in stylesheet.text
-    assert 'min-width: 0;' in stylesheet.text
-    assert 'max-width: none;' in stylesheet.text
-    assert 'padding: 0;' in stylesheet.text
+    assert stylesheet.text.startswith("html,")
+    assert "body {" in stylesheet.text
+    assert "overflow: hidden;" in stylesheet.text
+    assert ".tree-view-page {" in stylesheet.text
+    assert "display: flex;" in stylesheet.text
+    assert "flex-direction: column;" in stylesheet.text
+    assert "#tree-view-container" in stylesheet.text
+    assert "flex: 1 1 auto;" in stylesheet.text
+    assert "min-width: 0;" in stylesheet.text
+    assert "min-height: 0;" in stylesheet.text
+    assert "overflow: auto;" in stylesheet.text
+    assert "width: 100vw;" not in stylesheet.text
+    assert "height: calc(100vh" not in stylesheet.text
+    assert "max-width: none;" in stylesheet.text
 
 
 def tree_api_genealogy() -> Genealogy:
@@ -1454,7 +1478,7 @@ def test_tree_endpoint_serializes_simple_projection_and_person_details():
     assert root_card["surname"] == "Test"
     assert root_card["display_surname"] == "TEST"
     assert root_card["portrait"] == {
-        "url": "/static/portraits/fallback-male.svg",
+        "url": "/static/portraits/fallback-male.png",
         "kind": "FALLBACK_MALE",
     }
     person_ids = {item["id"] for item in data["person_occurrences"]}
@@ -1492,7 +1516,7 @@ def test_tree_endpoint_serves_registered_personal_portraits(tmp_path):
     )
     assert root_card["portrait"] == {
         "url": "/portraits/racine.jpg",
-        "kind": "PERSON",
+        "kind": "PERSON_LOCAL",
     }
     assert portrait.status_code == 200
     assert portrait.content == b"jpeg portrait"
@@ -1727,3 +1751,40 @@ def test_tree_endpoint_builds_projection_and_layout_once(monkeypatch):
 
     assert response.status_code == 200
     assert calls == {"projection": 1, "layout": 1}
+
+
+def test_tree_endpoint_serves_only_resolved_geneweb_portraits(tmp_path):
+    local_root = tmp_path / "local-portraits"
+    local_root.mkdir()
+    geneweb_root = tmp_path / "geneweb-portraits"
+    geneweb_root.mkdir()
+    (geneweb_root / "racine.0.test.jpg").write_bytes(b"\x89PNG\r\n\x1a\nportrait")
+    resolver = PortraitResolver(
+        tmp_path / "missing-portraits.json",
+        local_root,
+        geneweb_portraits_root=geneweb_root,
+    )
+
+    with TestClient(create_app(tree_api_genealogy(), portrait_resolver=resolver)) as client:
+        response = client.get(
+            "/people/@R@/tree",
+            params={
+                "ancestor_generations": 0,
+                "descendant_generations": 0,
+                "show_siblings": "false",
+            },
+        )
+        card = next(
+            item
+            for item in response.json()["person_cards"]
+            if item["occurrence_id"] == "person:root"
+        )
+        portrait = client.get(card["portrait"]["url"])
+        unresolved = client.get("/geneweb-portraits/not-resolved")
+
+    assert response.status_code == 200
+    assert card["portrait"]["kind"] == "PERSON_GENEWEB"
+    assert portrait.status_code == 200
+    assert portrait.headers["content-type"] == "image/png"
+    assert portrait.content == b"\x89PNG\r\n\x1a\nportrait"
+    assert unresolved.status_code == 404

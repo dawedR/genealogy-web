@@ -30,14 +30,14 @@ def test_resolver_returns_existing_personal_png_or_jpeg(tmp_path, filename, expe
     reference = resolver.resolve("@I1@", Sex.MALE)
 
     assert reference.url == expected_url
-    assert reference.kind is PortraitKind.PERSON
+    assert reference.kind is PortraitKind.PERSON_LOCAL
 
 
 @pytest.mark.parametrize(
     ("sex", "kind", "filename"),
     [
-        (Sex.MALE, PortraitKind.FALLBACK_MALE, "fallback-male.svg"),
-        (Sex.FEMALE, PortraitKind.FALLBACK_FEMALE, "fallback-female.svg"),
+        (Sex.MALE, PortraitKind.FALLBACK_MALE, "fallback-male.png"),
+        (Sex.FEMALE, PortraitKind.FALLBACK_FEMALE, "fallback-female.png"),
         (Sex.UNKNOWN, PortraitKind.FALLBACK_UNKNOWN, "fallback-unknown.svg"),
         (None, PortraitKind.FALLBACK_UNKNOWN, "fallback-unknown.svg"),
     ],
