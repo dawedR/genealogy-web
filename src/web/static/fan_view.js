@@ -33,7 +33,7 @@ function parseFanViewOptions(params) {
 function replaceFanViewUrl() {
     const o = fanViewOptions;
     const params = new URLSearchParams({person_id: o.personId, generations: String(o.generations), color_mode: o.colorMode, opening_angle: String(o.openingAngle), show_unknown: String(o.showUnknown), show_sosa: String(o.labelConfig.showSosa), show_name: String(o.labelConfig.showName), show_birth: String(o.labelConfig.showBirth), show_birth_place: String(o.labelConfig.showBirthPlace), show_death: String(o.labelConfig.showDeath), show_death_place: String(o.labelConfig.showDeathPlace)});
-    window.history.replaceState(null, "", `/fan-view?${params.toString()}`);
+    window.history.replaceState(null, "", appUrl(`/fan-view?${params.toString()}`));
 }
 function reloadFanView() {
     const generations = Number(fanViewGenerations.value);
@@ -45,7 +45,7 @@ async function loadFanView() {
     fanViewStatus.textContent = "Calcul de l’éventail…";
     clearFanLegend(fanViewLegend, fanViewLegendList);
     try {
-        const response = await fetch(`/people/${encodeURIComponent(fanViewOptions.personId)}/sosa?${new URLSearchParams({generations: String(fanViewOptions.generations), color_mode: fanViewOptions.colorMode}).toString()}`);
+        const response = await fetch(appUrl(`/people/${encodeURIComponent(fanViewOptions.personId)}/sosa?${new URLSearchParams({generations: String(fanViewOptions.generations), color_mode: fanViewOptions.colorMode}).toString()}`));
         const occurrences = await response.json();
         if (requestSerial !== fanViewRequestSerial) return;
         if (!response.ok) throw new Error(occurrences.detail || "Impossible de calculer l’éventail");

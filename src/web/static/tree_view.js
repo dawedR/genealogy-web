@@ -94,7 +94,7 @@ function synchronizeControls() {
 
 function replaceTreeViewUrl() {
     const params = new URLSearchParams({person_id: treeViewOptions.personId, ancestor_generations: String(treeViewOptions.ancestorGenerations), descendant_generations: String(treeViewOptions.descendantGenerations), show_generation_scale: String(treeViewOptions.showGenerationScale)});
-    window.history.replaceState(null, "", `/tree-view?${params.toString()}`);
+    window.history.replaceState(null, "", appUrl(`/tree-view?${params.toString()}`));
 }
 
 function updateGenerationsAndReload() {
@@ -116,7 +116,7 @@ async function loadDedicatedTree() {
     treeViewStatus.textContent = "Calcul de l’arbre familial…";
     treeViewDiagnostics.hidden = true;
     try {
-        const response = await fetch(`/people/${encodeURIComponent(treeViewOptions.personId)}/tree?${query.toString()}`);
+        const response = await fetch(appUrl(`/people/${encodeURIComponent(treeViewOptions.personId)}/tree?${query.toString()}`));
         const tree = await response.json();
         if (requestSerial !== treeViewRequestSerial) return;
         if (!response.ok) throw new Error(tree.detail || "Impossible de calculer l’arbre familial");

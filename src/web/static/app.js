@@ -195,7 +195,7 @@ importForm.addEventListener("submit", async (event) => {
     formData.append("file", file);
 
     try {
-        const response = await fetch("/imports", {
+        const response = await fetch(appUrl("/imports"), {
             method: "POST",
             body: formData,
         });
@@ -253,7 +253,7 @@ searchForm.addEventListener("submit", async (event) => {
 
     try {
         const response = await fetch(
-            `/people?q=${encodeURIComponent(query)}`
+            appUrl(`/people?q=${encodeURIComponent(query)}`)
         );
 
         const people = await response.json();
@@ -286,7 +286,7 @@ placeEnrichmentForm.addEventListener("submit", async (event) => {
     }
 
     try {
-        const response = await fetch("/place-enrichments", {
+        const response = await fetch(appUrl("/place-enrichments"), {
             method: "PUT",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
@@ -338,7 +338,7 @@ placeGeocodingSearch.addEventListener("click", async () => {
     placeGeocodingAttribution.hidden = true;
 
     try {
-        const response = await fetch("/geocoding/candidates", {
+        const response = await fetch(appUrl("/geocoding/candidates"), {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
@@ -368,7 +368,7 @@ placeEnrichmentValidate.addEventListener("click", async () => {
     }
 
     try {
-        const response = await fetch("/place-enrichments/validate", {
+        const response = await fetch(appUrl("/place-enrichments/validate"), {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
@@ -428,7 +428,7 @@ openFanViewButton.addEventListener("click", () => {
         show_birth_place: String(fanLabelBirthPlace.checked),
         show_death: String(fanLabelDeath.checked), show_death_place: String(fanLabelDeathPlace.checked),
     });
-    window.open(`/fan-view?${query.toString()}`, "_blank", "noopener");
+    window.open(appUrl(`/fan-view?${query.toString()}`), "_blank", "noopener");
 });
 
 for (const control of [treeAncestorGenerations, treeDescendantGenerations]) {
@@ -461,7 +461,7 @@ openTreeViewButton.addEventListener("click", () => {
         descendant_generations: treeDescendantGenerations.value,
         show_generation_scale: String(treeShowGenerationScale.checked),
     });
-    window.open(`/tree-view?${query.toString()}`, "_blank", "noopener");
+    window.open(appUrl(`/tree-view?${query.toString()}`), "_blank", "noopener");
 });
 
 function clearPersonSelection() {
@@ -506,7 +506,7 @@ async function selectDefaultPerson() {
 
     try {
         const response = await fetch(
-            "/people/" + encodeURIComponent(DEFAULT_PERSON_ID),
+            appUrl("/people/" + encodeURIComponent(DEFAULT_PERSON_ID)),
         );
 
         if (requestSerial !== selectionRequestSerial) {
@@ -585,7 +585,7 @@ function renderSearchResults(people) {
 
 async function loadGedcomStatus() {
     try {
-        const response = await fetch("/health");
+        const response = await fetch(appUrl("/health"));
         const health = await response.json();
 
         if (!response.ok) {
@@ -615,7 +615,7 @@ async function loadPlaces() {
     placesList.innerHTML = "";
 
     try {
-        const response = await fetch("/places");
+        const response = await fetch(appUrl("/places"));
         const places = await response.json();
 
         if (!response.ok) {
@@ -776,7 +776,7 @@ async function selectGeocodingCandidate(candidateToken) {
 
     try {
         const response = await fetch(
-            "/place-enrichments/geoapify-selection",
+            appUrl("/place-enrichments/geoapify-selection"),
             {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
@@ -895,10 +895,10 @@ async function loadTreeChart(personId) {
 
     try {
         const response = await fetch(
-            `/people/${encodeURIComponent(personId)}` +
+            appUrl(`/people/${encodeURIComponent(personId)}` +
             `/tree?ancestor_generations=${encodeURIComponent(ancestors)}` +
             `&descendant_generations=${encodeURIComponent(descendants)}` +
-            "&show_siblings=false",
+            "&show_siblings=false"),
         );
         const tree = await response.json();
 
@@ -972,9 +972,9 @@ async function loadFanChart(personId) {
 
     try {
         const response = await fetch(
-            `/people/${encodeURIComponent(personId)}` +
+            appUrl(`/people/${encodeURIComponent(personId)}` +
             `/sosa?generations=${encodeURIComponent(generations)}` +
-            `&color_mode=${encodeURIComponent(fanColorMode.value)}`
+            `&color_mode=${encodeURIComponent(fanColorMode.value)}`)
         );
 
         const occurrences = await response.json();

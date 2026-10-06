@@ -2,9 +2,11 @@ from urllib import response
 import os
 import importlib
 
+import pytest
+
 from fastapi.testclient import TestClient
 
-from src.api.app import create_app
+from src.api.app import _public_app_path, create_app, normalize_app_root_path
 from src.services.combined_tree import CombinedTreeOptions, build_combined_tree
 from src.services.portraits import PortraitResolver
 from src.services.tree_layout import layout_combined_tree
@@ -72,6 +74,138 @@ def make_client() -> TestClient:
     return TestClient(
         create_app(make_genealogy())
     )
+
+
+@pytest.mark.parametrize(
+    ("configured_root_path", "public_prefix"),
+    [("", ""), ("/genealogy", "/genealogy")],
+)
+def test_public_root_path_serves_pages_assets_api_and_fallback_portraits(
+    configured_root_path,
+    public_prefix,
+):
+    with TestClient(
+        create_app(make_genealogy(), root_path=configured_root_path),
+        root_path=configured_root_path,
+    ) as client:
+        index = client.get(f"{public_prefix}/")
+        tree_view = client.get(
+            f"{public_prefix}/tree-view?person_id=%40I1%40&ancestor_generations=0"
+        )
+        fan_view = client.get(
+            f"{public_prefix}/fan-view?person_id=%40I1%40&generations=1"
+        )
+        responses = [
+            client.get(f"{public_prefix}/health"),
+            client.get(f"{public_prefix}/people?q=dupont"),
+            client.get(f"{public_prefix}/people/%40I1%40/sosa?generations=1"),
+            client.get(f"{public_prefix}/people/%40I1%40/tree"),
+            client.get(f"{public_prefix}/static/style.css"),
+            client.get(f"{public_prefix}/static/app.js"),
+            client.get(f"{public_prefix}/static/tree_view.js"),
+            client.get(f"{public_prefix}/static/fan_view.js"),
+            client.get(f"{public_prefix}/static/portraits/fallback-male.png"),
+            client.get(f"{public_prefix}/app-config.js"),
+        ]
+
+    assert index.status_code == 200
+    assert tree_view.status_code == 200
+    assert fan_view.status_code == 200
+    assert all(response.status_code == 200 for response in responses)
+    assert 'href="./static/style.css"' in index.text
+    assert 'src="./app-config.js"' in index.text
+    assert 'src="./app-config.js"' in tree_view.text
+    assert 'src="./app-config.js"' in fan_view.text
+    config = responses[-1].text
+    assert f'{{"rootPath": "{configured_root_path}"}}' in config
+    assert "pathname === rootPath" in config
+    assert "externalUrl.test(value)" in config
+    tree = responses[3].json()
+    root_card = next(card for card in tree["person_cards"] if card["person_id"] == "@I1@")
+    assert root_card["portrait"]["url"] == (
+        f"{public_prefix}/static/portraits/fallback-male.png"
+    )
+
+
+def test_static_files_support_proxy_stripped_root_path_scope(monkeypatch):
+    """A public /genealogy/static URL reaches Uvicorn as /static."""
+
+    app = create_app(make_genealogy(), root_path="/genealogy")
+    static_mount = next(route for route in app.routes if route.path == "/static")
+    original_get_path = static_mount.app.get_path
+    received_scopes = []
+
+    def capture_static_scope(scope):
+        received_scopes.append(
+            {
+                name: scope.get(name)
+                for name in ("path", "root_path", "app_root_path", "raw_path")
+            }
+        )
+        return original_get_path(scope)
+
+    monkeypatch.setattr(static_mount.app, "get_path", capture_static_scope)
+
+    # Unlike TestClient(root_path=...), this is the proxy's internal request:
+    # the root path is configured on the ASGI app, but the request path no
+    # longer contains /genealogy.
+    with TestClient(app) as client:
+        health = client.get("/health")
+        configuration = client.get("/app-config.js")
+        assets = {
+            path: client.get(path)
+            for path in (
+                "/static/style.css",
+                "/static/app.js",
+                "/static/fan_renderer.js",
+                "/static/tree_renderer.js",
+                "/static/portraits/fallback-male.png",
+            )
+        }
+
+    assert health.status_code == 200
+    assert configuration.status_code == 200
+    assert all(response.status_code == 200 for response in assets.values())
+    assert received_scopes[0] == {
+        "path": "/static/style.css",
+        "root_path": "/genealogy/static",
+        "app_root_path": "/genealogy",
+        "raw_path": b"/static/style.css",
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [(None, ""), ("", ""), ("genealogy", "/genealogy"), ("/genealogy/", "/genealogy")],
+)
+def test_normalize_app_root_path(raw_value, expected):
+    assert normalize_app_root_path(raw_value) == expected
+
+
+@pytest.mark.parametrize("raw_value", ["//genealogy", "/genealogy//v1", "/../genealogy", "/genealogy?x=1", "https://example.test/genealogy", "/genealogy web"])
+def test_normalize_app_root_path_rejects_invalid_values(raw_value):
+    with pytest.raises(ValueError):
+        normalize_app_root_path(raw_value)
+
+
+def test_create_app_reads_normalized_root_path_from_environment(monkeypatch):
+    monkeypatch.setenv("APP_ROOT_PATH", "/genealogy/")
+
+    app = create_app(make_genealogy())
+
+    assert app.root_path == "/genealogy"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("/portraits/racine.jpg", "/genealogy/portraits/racine.jpg"),
+        ("/genealogy/portraits/racine.jpg", "/genealogy/portraits/racine.jpg"),
+        ("https://example.test/portrait.jpg", "https://example.test/portrait.jpg"),
+    ],
+)
+def test_public_portrait_urls_are_prefixed_once(url, expected):
+    assert _public_app_path(url, "/genealogy") == expected
 
 
 def test_health():
@@ -843,7 +977,7 @@ def test_main_frontend_selection_flow_requires_all_shared_tree_elements():
     assert fan_renderer.status_code == 200
     assert navigation.status_code == 200
     assert 'id="tree-status"' in page.text
-    assert page.text.index('/static/fan_renderer.js') < page.text.index('/static/app.js')
+    assert page.text.index('./static/fan_renderer.js') < page.text.index('./static/app.js')
     assert 'void initializePage();' in script.text
 
     default_start = script.text.index("async function selectDefaultPerson")
@@ -870,7 +1004,7 @@ def test_static_javascript_selects_i1_only_when_it_exists():
     script = response.text
 
     assert "const DEFAULT_PERSON_ID = \"@I1@\";" in script
-    assert "\"/people/\" + encodeURIComponent(DEFAULT_PERSON_ID)" in script
+    assert "appUrl(\"/people/\" + encodeURIComponent(DEFAULT_PERSON_ID))" in script
     assert "if (response.status === 404)" in script
     assert "await selectDefaultPerson();" in script
     assert "void initializePage();" in script
@@ -1514,7 +1648,7 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     assert 'treeStage.style.height' in javascript.text
     assert 'renderEmbeddedGenerationScale();' in javascript.text
     assert 'show_generation_scale: String(treeShowGenerationScale.checked)' in javascript.text
-    assert 'window.open(`/tree-view?${query.toString()}`, "_blank", "noopener")' in javascript.text
+    assert 'window.open(appUrl(`/tree-view?${query.toString()}`), "_blank", "noopener")' in javascript.text
     assert '"&show_siblings=false"' in javascript.text
     assert "treeShowSiblings" not in javascript.text
     assert 'edge.points.map' not in javascript.text
@@ -1568,7 +1702,7 @@ def test_dedicated_tree_view_exposes_options_zoom_pan_and_generation_scale():
         "tree-view-actual-size",
     ):
         assert f'id="{element_id}"' in page.text
-    assert '/static/tree_renderer.js' in page.text
+    assert './static/tree_renderer.js' in page.text
     assert 'new URLSearchParams(window.location.search)' in javascript.text
     assert 'parseTreeViewOptions' in javascript.text
     assert 'encodeURIComponent(treeViewOptions.personId)' in javascript.text
@@ -1665,8 +1799,8 @@ def test_tree_initial_render_resets_to_root_without_using_generation_scale_toggl
     assert "resetTreeViewportToRoot" not in toggle
     assert "function syncSize()" in navigation.text
     assert "function resetToActualSize()" in navigation.text
-    assert '/static/tree_viewport.js' in embedded_page.text
-    assert '/static/tree_viewport.js' in dedicated_page.text
+    assert './static/tree_viewport.js' in embedded_page.text
+    assert './static/tree_viewport.js' in dedicated_page.text
 def tree_api_genealogy() -> Genealogy:
     return Genealogy(
         persons={
@@ -1832,16 +1966,23 @@ def test_tree_endpoint_serves_registered_personal_portraits(tmp_path):
     registry.write_text('{"@R@": "racine.jpg"}', encoding="utf-8")
     resolver = PortraitResolver(registry, root)
 
-    with TestClient(create_app(tree_api_genealogy(), portrait_resolver=resolver)) as client:
+    with TestClient(
+        create_app(
+            tree_api_genealogy(),
+            portrait_resolver=resolver,
+            root_path="/genealogy",
+        ),
+        root_path="/genealogy",
+    ) as client:
         response = client.get(
-            "/people/@R@/tree",
+            "/genealogy/people/@R@/tree",
             params={
                 "ancestor_generations": 0,
                 "descendant_generations": 0,
                 "show_siblings": "false",
             },
         )
-        portrait = client.get("/portraits/racine.jpg")
+        portrait = client.get("/genealogy/portraits/racine.jpg")
 
     assert response.status_code == 200
     root_card = next(
@@ -1849,7 +1990,7 @@ def test_tree_endpoint_serves_registered_personal_portraits(tmp_path):
         if card["occurrence_id"] == "person:root"
     )
     assert root_card["portrait"] == {
-        "url": "/portraits/racine.jpg",
+        "url": "/genealogy/portraits/racine.jpg",
         "kind": "PERSON_LOCAL",
     }
     assert portrait.status_code == 200
@@ -2099,9 +2240,16 @@ def test_tree_endpoint_serves_only_resolved_geneweb_portraits(tmp_path):
         geneweb_portraits_root=geneweb_root,
     )
 
-    with TestClient(create_app(tree_api_genealogy(), portrait_resolver=resolver)) as client:
+    with TestClient(
+        create_app(
+            tree_api_genealogy(),
+            portrait_resolver=resolver,
+            root_path="/genealogy",
+        ),
+        root_path="/genealogy",
+    ) as client:
         response = client.get(
-            "/people/@R@/tree",
+            "/genealogy/people/@R@/tree",
             params={
                 "ancestor_generations": 0,
                 "descendant_generations": 0,
@@ -2114,10 +2262,12 @@ def test_tree_endpoint_serves_only_resolved_geneweb_portraits(tmp_path):
             if item["occurrence_id"] == "person:root"
         )
         portrait = client.get(card["portrait"]["url"])
-        unresolved = client.get("/geneweb-portraits/not-resolved")
+        unresolved = client.get("/genealogy/geneweb-portraits/not-resolved")
 
     assert response.status_code == 200
     assert card["portrait"]["kind"] == "PERSON_GENEWEB"
+    assert card["portrait"]["url"].startswith("/genealogy/geneweb-portraits/")
+    assert "/genealogy/genealogy/" not in card["portrait"]["url"]
     assert portrait.status_code == 200
     assert portrait.headers["content-type"] == "image/png"
     assert portrait.content == b"\x89PNG\r\n\x1a\nportrait"

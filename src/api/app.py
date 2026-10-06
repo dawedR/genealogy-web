@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import stat
@@ -11,7 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from fastapi import (
@@ -115,6 +116,81 @@ from src.storage.place_enrichments import (
 logger = logging.getLogger(__name__)
 
 
+class _ProxyRootPathStaticFiles(StaticFiles):
+    """Serve mounted files when a proxy has already stripped ``root_path``.
+
+    Starlette's ``StaticFiles`` normally receives a path that still contains
+    its mount's root path.  With an ASGI proxy scope such as
+    ``path=/static/style.css`` and ``root_path=/genealogy``, the mounted app
+    instead receives ``root_path=/genealogy/static`` while ``path`` remains
+    unprefixed.  Remove only the mount portion before resolving the file.
+    """
+
+    def get_path(self, scope) -> str:
+        root_path = scope.get("root_path", "")
+        app_root_path = scope.get("app_root_path", "")
+        path = scope["path"]
+
+        if (
+            app_root_path
+            and root_path.startswith(app_root_path)
+            and not _has_path_prefix(path, root_path)
+        ):
+            mount_path = root_path[len(app_root_path) :]
+            if mount_path and _has_path_prefix(path, mount_path):
+                relative_path = path[len(mount_path) :] or "/"
+                return os.path.normpath(
+                    os.path.join(*relative_path.split("/"))
+                )
+
+        return super().get_path(scope)
+
+
+def _has_path_prefix(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(f"{prefix}/")
+
+
+def normalize_app_root_path(value: str | None) -> str:
+    """Normalize the optional public ASGI root path.
+
+    Routes remain rooted at ``/`` inside FastAPI.  This value represents only
+    the public prefix supplied by an ASGI server or reverse proxy.
+    """
+
+    if value is None:
+        return ""
+
+    root_path = value.strip()
+    if not root_path or root_path == "/":
+        return ""
+    if "?" in root_path or "#" in root_path or "://" in root_path:
+        raise ValueError("APP_ROOT_PATH must be a path without query or fragment")
+    if any(character.isspace() for character in root_path):
+        raise ValueError("APP_ROOT_PATH must not contain whitespace")
+    if not root_path.startswith("/"):
+        root_path = f"/{root_path}"
+    if "//" in root_path:
+        raise ValueError("APP_ROOT_PATH must not contain empty path segments")
+
+    root_path = root_path.rstrip("/")
+    path_segments = root_path.split("/")[1:]
+    if not path_segments or any(segment in {"", ".", ".."} for segment in path_segments):
+        raise ValueError("APP_ROOT_PATH must contain normal path segments")
+    return root_path
+
+
+def _public_app_path(path: str, root_path: str) -> str:
+    """Prefix an internal HTTP path once, leaving external URLs untouched."""
+
+    if not root_path or "://" in path or path.startswith("//"):
+        return path
+    if path == root_path or path.startswith(f"{root_path}/"):
+        return path
+    if not path.startswith("/"):
+        return path
+    return f"{root_path}{path}"
+
+
 @dataclass(frozen=True)
 class _GenealogyProvenance:
     source: Literal["AUTO", "MANUAL"] | None = None
@@ -199,7 +275,11 @@ def create_app(
     place_enrichment_store: PlaceEnrichmentStore | None = None,
     geocoder: Geocoder | None = None,
     portrait_resolver: PortraitResolver | None = None,
+    root_path: str | None = None,
 ) -> FastAPI:
+    configured_root_path = normalize_app_root_path(
+        os.environ.get("APP_ROOT_PATH") if root_path is None else root_path
+    )
     initial_genealogy = genealogy or Genealogy()
     configured_gedcom_dir = os.environ.get("GENEALOGY_GEDCOM_DIR")
     geneweb_portraits_dir = os.environ.get("GENEWEB_PORTRAITS_DIR")
@@ -275,6 +355,7 @@ def create_app(
         title="Genealogy Web",
         version="0.1.0",
         lifespan=lifespan,
+        root_path=configured_root_path,
     )
     
     web_root = (
@@ -285,17 +366,39 @@ def create_app(
 
     app.mount(
         "/static",
-        StaticFiles(directory=web_root),
+        _ProxyRootPathStaticFiles(directory=web_root),
         name="static",
     )
     app.mount(
         "/portraits",
-        StaticFiles(
+        _ProxyRootPathStaticFiles(
             directory=initial_portrait_resolver.portraits_root,
             check_dir=False,
         ),
         name="portraits",
     )
+
+    @app.get("/app-config.js", include_in_schema=False)
+    def app_config() -> Response:
+        configuration = json.dumps({"rootPath": configured_root_path})
+        return Response(
+            "window.APP_CONFIG = " + configuration + ";\n"
+            "window.appUrl = (function (rootPath) {\n"
+            "  const externalUrl = /^[a-z][a-z0-9+.-]*:/i;\n"
+            "  return function appUrl(value) {\n"
+            "    if (typeof value !== 'string') throw new TypeError('appUrl expects a string');\n"
+            "    if (externalUrl.test(value) || value.startsWith('//')) return value;\n"
+            "    const match = value.match(/^([^?#]*)(.*)$/);\n"
+            "    let pathname = match[1] || '/';\n"
+            "    const suffix = match[2];\n"
+            "    if (!pathname.startsWith('/')) pathname = '/' + pathname;\n"
+            "    if (rootPath && (pathname === rootPath || pathname.startsWith(rootPath + '/'))) return pathname + suffix;\n"
+            "    if (pathname === '/') return (rootPath || '/') + suffix;\n"
+            "    return rootPath + pathname + suffix;\n"
+            "  };\n"
+            "})(window.APP_CONFIG.rootPath);\n",
+            media_type="application/javascript",
+        )
 
 
     @app.get("/geneweb-portraits/{token}", include_in_schema=False)
@@ -655,6 +758,7 @@ def create_app(
             current,
             layout_combined_tree(projection, PORTRAIT_TREE_LAYOUT_CONFIGURATION),
             initial_portrait_resolver,
+            configured_root_path,
         )
 
     @app.get(
@@ -785,6 +889,7 @@ def _combined_tree_response(
     genealogy: Genealogy,
     layout: TreeLayout,
     portraits: PortraitResolver,
+    root_path: str,
 ) -> CombinedTreeResponse:
     return CombinedTreeResponse(
         root_occurrence_id=projection.root_occurrence_id,
@@ -805,7 +910,8 @@ def _combined_tree_response(
         ],
         person_cards=[
             _tree_person_card_response(
-                build_tree_person_card(occurrence, genealogy, portraits)
+                build_tree_person_card(occurrence, genealogy, portraits),
+                root_path,
             )
             for occurrence in projection.person_occurrences
         ],
@@ -903,7 +1009,7 @@ def _tree_person_occurrence_response(
     )
 
 
-def _tree_person_card_response(card) -> TreePersonCardResponse:
+def _tree_person_card_response(card, root_path: str) -> TreePersonCardResponse:
     return TreePersonCardResponse(
         occurrence_id=card.occurrence_id,
         person_id=card.person_id,
@@ -918,7 +1024,7 @@ def _tree_person_card_response(card) -> TreePersonCardResponse:
         death_date=card.death_date,
         display_death_date=card.display_death_date,
         portrait=PortraitReferenceResponse(
-            url=card.portrait.url,
+            url=_public_app_path(card.portrait.url, root_path),
             kind=card.portrait.kind.value,
         ),
     )
