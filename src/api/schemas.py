@@ -189,6 +189,22 @@ class AdministrativeReferenceDeleteRequest(BaseModel):
     original_name: str
 
 
+class PlacePresentationComponentResponse(BaseModel):
+    kind: str
+    value: str
+    provenance: str
+    verified: bool
+
+
+class PlacePresentationResponse(BaseModel):
+    original_name: str
+    full_label: str
+    short_label: str
+    components: list[PlacePresentationComponentResponse]
+    warnings: list[str]
+    generated_from: str
+
+
 class HistoricalPlaceProposalResponse(BaseModel):
     source_original_name: str
     historical_original_name: str

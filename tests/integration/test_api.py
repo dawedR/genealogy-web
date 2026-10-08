@@ -11,6 +11,7 @@ from src.services.combined_tree import CombinedTreeOptions, build_combined_tree
 from src.services.portraits import PortraitResolver
 from src.services.tree_layout import layout_combined_tree
 from src.services.tree_view import PORTRAIT_TREE_LAYOUT_CONFIGURATION
+from src.services.cog import CogResolver
 from src.domain.models import (
     AdministrativeReference,
     AdministrativeReferenceStatus,
@@ -2916,3 +2917,42 @@ def test_administrative_inventory_marks_an_obsolete_reference_without_rewriting_
     assert response.status_code == 200
     assert response.json()[0]["reference_is_current"] is False
     assert references.get(original_name) == stale
+
+
+def test_place_presentations_endpoint_uses_only_confirmed_current_administrative_reference():
+    chaneac = "Chanéac, 07054, Ardèche, Auvergne-Rhône-Alpes, France"
+    paris = "Paris 12, 75112, Paris, Île-de-France, France"
+    polish = "Odrzywół, powiat d'Opoczno, gouvernement de Radom, Pologne"
+    genealogy = Genealogy(persons={
+        "@I1@": Person(id="@I1@", events=[
+            Event(type="BIRT", place=Place(original_name=chaneac)),
+            Event(type="BIRT", place=Place(original_name=paris)),
+            Event(type="BIRT", place=Place(original_name=polish)),
+        ])
+    })
+    candidate = CogResolver.bundled().lookup("07054", "COM")
+    assert candidate is not None
+    references = InMemoryAdministrativeReferenceStore()
+    references.save(AdministrativeReference(
+        original_name=chaneac, source="insee_cog", vintage="2026",
+        cog_code=candidate.code, cog_type=candidate.type, commune=candidate.commune,
+        department_code=candidate.department_code, department=candidate.department,
+        region_code=candidate.region_code, region=candidate.region,
+        historical_name=None, valid_from=None, valid_to=None,
+        match_method="CURRENT_CODE_AND_NAME", status=AdministrativeReferenceStatus.CONFIRMED,
+    ))
+    before_references = references.get_all()
+
+    with TestClient(create_app(
+        genealogy, administrative_reference_store=references,
+    )) as client:
+        response = client.get("/places/presentations")
+
+    assert response.status_code == 200
+    presentations = {item["original_name"]: item for item in response.json()}
+    assert presentations[chaneac]["full_label"] == chaneac
+    assert presentations[chaneac]["generated_from"] == "ADMINISTRATIVE_REFERENCE"
+    assert presentations[paris]["full_label"] == paris
+    assert presentations[paris]["generated_from"] == "GEDCOM_FALLBACK"
+    assert presentations[polish]["short_label"] == "Odrzywół"
+    assert references.get_all() == before_references

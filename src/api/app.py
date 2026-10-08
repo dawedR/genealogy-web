@@ -55,6 +55,8 @@ from src.api.schemas import (
     PlaceEnrichmentValidationRequest,
     PlaceEnrichmentUpdateRequest,
     PlaceInventoryResponse,
+    PlacePresentationComponentResponse,
+    PlacePresentationResponse,
     SosaOccurrenceResponse,
     TreeDiagnosticResponse,
     TreeCentralFamilyCoreResponse,
@@ -118,6 +120,7 @@ from src.services.geocoding import (
 from src.services.geoapify import GeoapifyGeocoder
 from src.services.places import inventory_places
 from src.services.place_reconciliation import reconcile_historical_places
+from src.services.place_presentation import PlacePresentation, PlacePresentationService
 from src.services.sosa import build_sosa_ancestry
 from src.services.portraits import PortraitResolver
 from src.services.tree_cards import build_tree_person_card
@@ -562,6 +565,20 @@ def create_app(
             _cog_diagnostic_response(_cog_resolver(request).resolve(entry.original_name))
             for entry in inventory_places(_genealogy(request))
             if _is_french_place(entry.original_name)
+        ]
+
+    @app.get("/places/presentations", response_model=list[PlacePresentationResponse])
+    def place_presentations(request: Request) -> list[PlacePresentationResponse]:
+        enrichments = _place_enrichment_store(request).get_all()
+        references = _administrative_reference_store(request).get_all()
+        service = PlacePresentationService(_cog_resolver(request))
+        return [
+            _place_presentation_response(service.present(
+                entry.original_name,
+                enrichments.get(entry.original_name),
+                references.get(entry.original_name),
+            ))
+            for entry in inventory_places(_genealogy(request))
         ]
 
     @app.get(
@@ -1479,6 +1496,27 @@ def _cog_candidate_response(candidate: CogCandidate) -> CogCandidateResponse:
         historical_name=candidate.historical_name,
         valid_from=candidate.valid_from,
         valid_to=candidate.valid_to,
+    )
+
+
+def _place_presentation_response(
+    presentation: PlacePresentation,
+) -> PlacePresentationResponse:
+    return PlacePresentationResponse(
+        original_name=presentation.original_name,
+        full_label=presentation.full_label,
+        short_label=presentation.short_label,
+        components=[
+            PlacePresentationComponentResponse(
+                kind=component.kind,
+                value=component.value,
+                provenance=component.provenance.value,
+                verified=component.verified,
+            )
+            for component in presentation.components
+        ],
+        warnings=[warning.value for warning in presentation.warnings],
+        generated_from=presentation.generated_from.value,
     )
 
 
