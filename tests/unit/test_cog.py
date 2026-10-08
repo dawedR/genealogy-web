@@ -89,3 +89,14 @@ def test_cog_does_not_infer_a_postcode_when_no_cog_match_exists():
     assert resolution.source_code_kind is SourceCodeKind.UNCONFIRMED_FIVE_DIGIT
     assert resolution.candidate is None
     assert CogWarning.CODE_NOT_IN_COG in resolution.warnings
+
+
+def test_cog_supports_exact_lookup_and_local_search_for_manual_selection():
+    resolver = CogResolver.bundled()
+
+    selected = resolver.lookup("69384", "ARM")
+    found = resolver.search("Francheville")
+
+    assert selected is not None
+    assert selected.commune == "Lyon 4e Arrondissement"
+    assert any(candidate.code == "69089" and candidate.type == "COM" for candidate in found)

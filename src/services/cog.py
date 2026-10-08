@@ -204,6 +204,42 @@ class CogResolver:
             (CogReason.SOURCE_COUNTRY_FRANCE,), tuple(warnings),
         )
 
+    def lookup(self, code: str, cog_type: str) -> CogCandidate | None:
+        """Return one exact COG identity, including historical entries."""
+
+        current = [
+            row for row in self._repository.current_by_code.get(code, [])
+            if row["TYPECOM"] == cog_type
+        ]
+        if len(current) == 1:
+            return self._candidate(current[0])
+
+        historical = [
+            row for row in self._repository.historical_by_code.get(code, [])
+            if row["TYPECOM"] == cog_type
+        ]
+        if len(historical) == 1:
+            return self._candidate_for_historical(historical[0])
+        return None
+
+    def search(self, query: str, *, limit: int = 20) -> list[CogCandidate]:
+        """Search current COG names locally; selection still requires a human."""
+
+        key = _name_key(query)
+        if not key:
+            return []
+        candidates = [
+            self._candidate(row)
+            for rows in self._repository.current_by_code.values()
+            for row in rows
+            if key in _name_key(row["NCCENR"])
+        ]
+        candidates.sort(key=lambda candidate: (
+            _name_key(candidate.commune) != key,
+            candidate.commune.casefold(), candidate.code, candidate.type,
+        ))
+        return candidates[:limit]
+
     def _candidate(self, row: dict[str, str]) -> CogCandidate:
         administrative_row = _administrative_row(
             self._repository.current_by_code.get(row.get("COMPARENT") or row["COM"], [row])

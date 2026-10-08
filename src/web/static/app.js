@@ -55,6 +55,18 @@ const historicalReconciliationList = document.querySelector(
 const historicalReconciliationShowAll = document.querySelector(
     "#historical-reconciliation-show-all",
 );
+const administrativeReferences = document.querySelector(
+    "#administrative-references",
+);
+const administrativeReferencesSummary = document.querySelector(
+    "#administrative-references-summary",
+);
+const administrativeReferencesList = document.querySelector(
+    "#administrative-references-list",
+);
+const administrativeReferencesConfirmSelected = document.querySelector(
+    "#administrative-references-confirm-selected",
+);
 
 const searchForm = document.querySelector("#search-form");
 const searchQuery = document.querySelector("#search-query");
@@ -188,6 +200,8 @@ let currentPlacesByOriginalName = new Map();
 let historicalReconciliations = [];
 let skippedHistoricalProposals = new Set();
 let showAllHistoricalProposals = false;
+let administrativeReferenceEntries = [];
+let reviewedAdministrativeMatches = new Set();
 
 
 importForm.addEventListener("submit", async (event) => {
@@ -246,6 +260,7 @@ importForm.addEventListener("submit", async (event) => {
         placeEnrichmentForm.hidden = true;
         await loadPlaces();
         await loadHistoricalReconciliation({resetSession: true});
+        await loadAdministrativeReferences({resetSession: true});
 
         clearPersonSelection();
         searchResults.innerHTML = "";
@@ -561,6 +576,7 @@ async function initializePage() {
     await loadGedcomStatus();
     await loadPlaces();
     await loadHistoricalReconciliation({resetSession: true});
+    await loadAdministrativeReferences({resetSession: true});
     await selectDefaultPerson();
 }
 
@@ -904,6 +920,338 @@ async function reuseHistoricalProposal(proposal) {
 
 function historicalProposalKey(proposal) {
     return `${proposal.source_original_name}\u0000${proposal.historical_original_name}`;
+}
+
+
+administrativeReferencesConfirmSelected.addEventListener("click", () => {
+    void confirmReviewedAdministrativeMatches();
+});
+
+
+async function loadAdministrativeReferences({resetSession = false} = {}) {
+    if (resetSession) {
+        reviewedAdministrativeMatches = new Set();
+    }
+    try {
+        const response = await fetch(appUrl("/places/administrative-references"));
+        const entries = await response.json();
+        if (!response.ok) {
+            throw new Error(entries.detail || "Impossible de charger les rattachements COG");
+        }
+        administrativeReferenceEntries = entries;
+        renderAdministrativeReferences();
+    } catch (error) {
+        administrativeReferenceEntries = [];
+        administrativeReferences.hidden = false;
+        administrativeReferencesSummary.textContent = error.message;
+        administrativeReferencesList.innerHTML = "";
+        administrativeReferencesConfirmSelected.hidden = true;
+    }
+}
+
+
+function renderAdministrativeReferences() {
+    const counts = {MATCHED: 0, REVIEW: 0, AMBIGUOUS: 0, NO_MATCH: 0};
+    for (const entry of administrativeReferenceEntries) {
+        counts[entry.diagnostic.classification] += 1;
+    }
+    administrativeReferencesSummary.textContent =
+        `${counts.MATCHED} correspondances · ${counts.REVIEW} à examiner · ` +
+        `${counts.NO_MATCH} non résolues`;
+    administrativeReferencesList.innerHTML = "";
+    administrativeReferences.hidden = administrativeReferenceEntries.length === 0;
+
+    const candidates = administrativeReferenceEntries.filter(entry =>
+        entry.reference || ["MATCHED", "REVIEW", "NO_MATCH"].includes(
+            entry.diagnostic.classification,
+        ),
+    );
+    for (const entry of candidates) {
+        administrativeReferencesList.appendChild(
+            administrativeReferenceElement(entry),
+        );
+    }
+    if (candidates.length === 0 && administrativeReferenceEntries.length > 0) {
+        administrativeReferencesList.textContent =
+            "Toutes les propositions actuellement affichables ont été traitées.";
+    }
+    administrativeReferencesConfirmSelected.hidden =
+        reviewedAdministrativeMatches.size === 0;
+}
+
+
+function administrativeReferenceElement(entry) {
+    const container = document.createElement("article");
+    container.className = "administrative-reference administrative-reference-" +
+        entry.diagnostic.classification.toLowerCase();
+    const title = document.createElement("strong");
+    title.textContent = `${entry.original_name} · ${entry.occurrences_count} occurrence(s)`;
+    container.appendChild(title);
+
+    if (entry.reference) {
+        const saved = document.createElement("p");
+        saved.textContent = "Référence conservée : " +
+            formatAdministrativeReference(entry.reference) +
+            ` · ${entry.reference.status}`;
+        container.appendChild(saved);
+        if (entry.reference_is_current === false) {
+            const stale = document.createElement("p");
+            stale.className = "administrative-reference-warnings";
+            stale.textContent =
+                "Référence à revoir : elle ne correspond plus au référentiel COG actif.";
+            container.appendChild(stale);
+        }
+        if (entry.reference.human_note) {
+            const note = document.createElement("p");
+            note.textContent = `Note : ${entry.reference.human_note}`;
+            container.appendChild(note);
+        }
+        const query = document.createElement("input");
+        query.type = "search";
+        query.value = entry.reference.commune;
+        query.setAttribute("aria-label", "Corriger par une recherche COG");
+        const correct = document.createElement("button");
+        correct.type = "button";
+        correct.textContent = "Choisir une autre référence";
+        const results = document.createElement("div");
+        correct.addEventListener("click", () => {
+            void searchAdministrativeCog(entry.original_name, query.value, results);
+        });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Retirer le rattachement";
+        remove.addEventListener("click", () => {
+            void deleteAdministrativeReference(entry.original_name);
+        });
+        container.append(query, correct, remove, results);
+        return container;
+    }
+
+    const candidate = entry.diagnostic.candidate;
+    if (candidate) {
+        const detail = document.createElement("p");
+        detail.textContent = formatCogCandidate(candidate);
+        container.appendChild(detail);
+    }
+    if (entry.diagnostic.reasons.length > 0) {
+        const reasons = document.createElement("p");
+        reasons.textContent = `Raisons : ${entry.diagnostic.reasons.join(" · ")}`;
+        container.appendChild(reasons);
+    }
+    if (entry.diagnostic.warnings.length > 0) {
+        const warnings = document.createElement("p");
+        warnings.className = "administrative-reference-warnings";
+        warnings.textContent = `À vérifier : ${entry.diagnostic.warnings.join(" · ")}`;
+        container.appendChild(warnings);
+    }
+
+    if (entry.diagnostic.classification === "MATCHED") {
+        const review = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = reviewedAdministrativeMatches.has(entry.original_name);
+        checkbox.addEventListener("change", () => {
+            if (checkbox.checked) reviewedAdministrativeMatches.add(entry.original_name);
+            else reviewedAdministrativeMatches.delete(entry.original_name);
+            administrativeReferencesConfirmSelected.hidden =
+                reviewedAdministrativeMatches.size === 0;
+        });
+        review.append(checkbox, " Proposition revue");
+        const confirm = document.createElement("button");
+        confirm.type = "button";
+        confirm.textContent = "Confirmer";
+        confirm.addEventListener("click", () => {
+            void confirmAdministrativeMatches([entry.original_name]);
+        });
+        container.append(review, confirm);
+    } else if (entry.diagnostic.classification === "REVIEW") {
+        const note = document.createElement("textarea");
+        note.placeholder = "Note de revue facultative";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.textContent = "Conserver pour revue";
+        save.addEventListener("click", () => {
+            void submitAdministrativeReview(entry.original_name, note.value);
+        });
+        container.append(note, save);
+    } else if (entry.diagnostic.classification === "NO_MATCH") {
+        const query = document.createElement("input");
+        query.type = "search";
+        query.value = entry.original_name.split(",", 1)[0];
+        query.setAttribute("aria-label", "Rechercher dans le COG");
+        const search = document.createElement("button");
+        search.type = "button";
+        search.textContent = "Rechercher dans le COG";
+        const results = document.createElement("div");
+        search.addEventListener("click", () => {
+            void searchAdministrativeCog(entry.original_name, query.value, results);
+        });
+        container.append(query, search, results);
+    }
+    return container;
+}
+
+
+async function confirmReviewedAdministrativeMatches() {
+    await confirmAdministrativeMatches([...reviewedAdministrativeMatches]);
+}
+
+
+async function confirmAdministrativeMatches(names) {
+    try {
+        for (const original_name of names) {
+            const response = await fetch(
+                appUrl("/places/administrative-references/confirm-match"),
+                {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({original_name}),
+                },
+            );
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.detail || "Confirmation COG impossible");
+        }
+        placesStatus.textContent = `${names.length} rattachement(s) COG confirmé(s).`;
+        await loadAdministrativeReferences({resetSession: true});
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
+}
+
+
+async function submitAdministrativeReview(original_name, human_note) {
+    try {
+        const response = await fetch(
+            appUrl("/places/administrative-references/submit-review"),
+            {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({original_name, human_note: emptyToNull(human_note)}),
+            },
+        );
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "Revue COG impossible");
+        placesStatus.textContent = "Proposition COG conservée pour revue.";
+        await loadAdministrativeReferences();
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
+}
+
+
+async function searchAdministrativeCog(original_name, query, container) {
+    container.textContent = "Recherche COG…";
+    try {
+        const response = await fetch(appUrl(`/cog/search?query=${encodeURIComponent(query)}`));
+        const candidates = await response.json();
+        if (!response.ok) throw new Error(candidates.detail || "Recherche COG impossible");
+        container.innerHTML = "";
+        if (candidates.length === 0) {
+            container.textContent = "Aucune référence COG trouvée.";
+            return;
+        }
+        for (const candidate of candidates) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = "Choisir " + formatCogCandidate(candidate);
+            button.addEventListener("click", () => {
+                void selectAdministrativeCog(original_name, candidate, container);
+            });
+            container.appendChild(button);
+        }
+    } catch (error) {
+        container.textContent = error.message;
+    }
+}
+
+
+function formatCogCandidate(candidate) {
+    return formatCogLocation({
+        commune: candidate.commune,
+        type: candidate.type,
+        code: candidate.code,
+        department: candidate.department,
+        region: candidate.region,
+        historicalName: candidate.historical_name,
+        validFrom: candidate.valid_from,
+        validTo: candidate.valid_to,
+    });
+}
+
+
+function formatAdministrativeReference(reference) {
+    return formatCogLocation({
+        commune: reference.commune,
+        type: reference.cog_type,
+        code: reference.cog_code,
+        department: reference.department,
+        region: reference.region,
+        historicalName: reference.historical_name,
+        validFrom: reference.valid_from,
+        validTo: reference.valid_to,
+    });
+}
+
+
+function formatCogLocation({
+    commune, type, code, department, region, historicalName, validFrom, validTo,
+}) {
+    const identity = [commune, type && code ? `(${type} ${code})` : null]
+        .filter(Boolean)
+        .join(" ");
+    const administration = [department, region].filter(Boolean).join(" · ");
+    const historical = historicalName
+        ? ` · Nom historique : ${historicalName}` +
+            (validFrom || validTo
+                ? ` (${validFrom || "?"} – ${validTo || "?"})`
+                : "")
+        : "";
+    return identity + (administration ? ` — ${administration}` : "") + historical;
+}
+
+
+async function selectAdministrativeCog(original_name, candidate, resultsContainer) {
+    try {
+        const response = await fetch(
+            appUrl("/places/administrative-references/manual-selection"),
+            {
+                method: "PUT",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    original_name,
+                    cog_code: candidate.code,
+                    cog_type: candidate.type,
+                }),
+            },
+        );
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "Sélection COG impossible");
+        resultsContainer.innerHTML = "";
+        resultsContainer.hidden = true;
+        placesStatus.textContent = "Rattachement COG confirmé manuellement.";
+        await loadAdministrativeReferences();
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
+}
+
+
+async function deleteAdministrativeReference(original_name) {
+    try {
+        const response = await fetch(appUrl("/places/administrative-references"), {
+            method: "DELETE",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({original_name}),
+        });
+        if (!response.ok) {
+            const result = await response.json();
+            throw new Error(result.detail || "Retrait COG impossible");
+        }
+        placesStatus.textContent = "Rattachement COG retiré.";
+        await loadAdministrativeReferences();
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
 }
 
 

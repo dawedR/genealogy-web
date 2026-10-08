@@ -140,6 +140,55 @@ class CogDiagnosticResponse(BaseModel):
     warnings: list[str]
 
 
+class AdministrativeReferenceResponse(BaseModel):
+    original_name: str
+    source: str
+    vintage: str
+    cog_code: str
+    cog_type: str
+    commune: str
+    department_code: str | None
+    department: str | None
+    region_code: str | None
+    region: str | None
+    historical_name: str | None
+    valid_from: str | None
+    valid_to: str | None
+    match_method: str
+    status: str
+    human_note: str | None
+
+
+class AdministrativeReferenceInventoryResponse(BaseModel):
+    original_name: str
+    occurrences_count: int
+    diagnostic: CogDiagnosticResponse
+    reference: AdministrativeReferenceResponse | None
+    reference_is_current: bool | None
+
+
+class AdministrativeReferenceMatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    original_name: str
+
+
+class AdministrativeReferenceReviewRequest(AdministrativeReferenceMatchRequest):
+    human_note: str | None = None
+
+
+class AdministrativeReferenceManualSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    original_name: str
+    cog_code: str
+    cog_type: str
+    human_note: str | None = None
+
+
+class AdministrativeReferenceDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    original_name: str
+
+
 class HistoricalPlaceProposalResponse(BaseModel):
     source_original_name: str
     historical_original_name: str

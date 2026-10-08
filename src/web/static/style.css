@@ -298,6 +298,61 @@ button {
     border-top: 1px solid #ddd;
 }
 
+#administrative-references {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #ddd;
+}
+
+.administrative-references-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.administrative-references-heading h3,
+.administrative-references-heading p {
+    margin: 0;
+}
+
+#administrative-references-list {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.administrative-reference {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.75rem;
+    border: 1px solid #ddd;
+    border-left: 0.35rem solid #4a7c59;
+}
+
+.administrative-reference-review {
+    border-left-color: #b7791f;
+}
+
+.administrative-reference-no_match {
+    border-left-color: #7a1f1f;
+}
+
+.administrative-reference p {
+    margin: 0;
+}
+
+.administrative-reference-warnings {
+    color: #7a1f1f;
+    font-weight: 600;
+}
+
+.administrative-reference textarea {
+    min-height: 3rem;
+    max-width: 32rem;
+}
+
 .historical-reconciliation-heading {
     display: flex;
     justify-content: space-between;

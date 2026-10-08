@@ -30,6 +30,13 @@ class PlaceEnrichmentStatus(str, Enum):
     VALIDATED = "VALIDATED"
 
 
+class AdministrativeReferenceStatus(str, Enum):
+    """Human decision state for a COG administrative reference."""
+
+    REVIEW = "REVIEW"
+    CONFIRMED = "CONFIRMED"
+
+
 @dataclass(frozen=True)
 class GeographicReference:
     """Immutable provider snapshot retained separately from active place data."""
@@ -104,6 +111,38 @@ class PlaceEnrichment:
                 or self.longitude != self.geographic_reference.longitude
             )
         )
+
+
+@dataclass(frozen=True)
+class AdministrativeReference:
+    """A human-reviewed administrative attachment from a versioned COG."""
+
+    original_name: str
+    source: str
+    vintage: str
+    cog_code: str
+    cog_type: str
+    commune: str
+    department_code: str | None
+    department: str | None
+    region_code: str | None
+    region: str | None
+    historical_name: str | None
+    valid_from: str | None
+    valid_to: str | None
+    match_method: str
+    status: AdministrativeReferenceStatus
+    human_note: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.source != "insee_cog":
+            raise ValueError("administrative reference source must be insee_cog")
+        if not self.vintage:
+            raise ValueError("administrative reference vintage is required")
+        if self.cog_type not in {"COM", "COMA", "COMD", "ARM"}:
+            raise ValueError("administrative reference has an invalid COG type")
+        if not self.cog_code or not self.commune or not self.match_method:
+            raise ValueError("administrative reference requires COG identity and method")
 
 
 @dataclass

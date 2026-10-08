@@ -12,6 +12,8 @@ from src.services.portraits import PortraitResolver
 from src.services.tree_layout import layout_combined_tree
 from src.services.tree_view import PORTRAIT_TREE_LAYOUT_CONFIGURATION
 from src.domain.models import (
+    AdministrativeReference,
+    AdministrativeReferenceStatus,
     Event,
     Family,
     GeographicReference,
@@ -32,6 +34,7 @@ from src.services.geocoding import (
     GeocodingTimeoutError,
 )
 from src.storage.place_enrichments import InMemoryPlaceEnrichmentStore
+from src.storage.administrative_references import InMemoryAdministrativeReferenceStore
 
 
 def make_genealogy() -> Genealogy:
@@ -1334,6 +1337,10 @@ def test_index_page():
         "historical-reconciliation-summary",
         "historical-reconciliation-list",
         "historical-reconciliation-show-all",
+        "administrative-references",
+        "administrative-references-summary",
+        "administrative-references-list",
+        "administrative-references-confirm-selected",
         "fan-opening",
         "fan-chart",
         "fan-legend",
@@ -1361,6 +1368,19 @@ def test_static_javascript():
     assert "renderHistoricalReconciliation" in response.text
     assert "reuseHistoricalProposal" in response.text
     assert "place-reconciliation/historical/reuse" in response.text
+    assert "loadAdministrativeReferences" in response.text
+    assert "confirmAdministrativeMatches" in response.text
+    assert "places/administrative-references/confirm-match" in response.text
+    assert "places/administrative-references/submit-review" in response.text
+    assert "places/administrative-references/manual-selection" in response.text
+    assert "cog/search" in response.text
+    assert "formatCogCandidate" in response.text
+    assert "formatAdministrativeReference" in response.text
+    assert "formatCogLocation" in response.text
+    assert "candidate.cog_type" not in response.text
+    assert "type: candidate.type" in response.text
+    assert "selectAdministrativeCog(original_name, candidate, container)" in response.text
+    assert "resultsContainer.hidden = true;" in response.text
     assert "placeStatusLabel" in response.text
     assert "place-enrichments/validate" in response.text
     assert "loadFanChart(person.id);" in response.text
@@ -2744,3 +2764,155 @@ def test_tree_endpoint_serves_only_resolved_geneweb_portraits(tmp_path):
     assert portrait.headers["content-type"] == "image/png"
     assert portrait.content == b"\x89PNG\r\n\x1a\nportrait"
     assert unresolved.status_code == 404
+
+
+def test_administrative_references_confirm_review_and_manual_selection_are_server_derived():
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[
+                    Event(type="BIRT", place=Place(original_name=(
+                        "Chanéac, 07054, Ardèche, Auvergne-Rhône-Alpes, France"
+                    ))),
+                    Event(type="BIRT", place=Place(original_name=(
+                        "Lyon, 69003, Rhône, Auvergne-Rhône-Alpes, France"
+                    ))),
+                    Event(type="BIRT", place=Place(original_name=(
+                        "Francheville, 69340, Rhône, Auvergne-Rhône-Alpes, France"
+                    ))),
+                ],
+            )
+        }
+    )
+    enrichments = InMemoryPlaceEnrichmentStore()
+    references = InMemoryAdministrativeReferenceStore()
+
+    with TestClient(create_app(
+        genealogy,
+        place_enrichment_store=enrichments,
+        administrative_reference_store=references,
+    )) as client:
+        inventory = client.get("/places/administrative-references")
+        confirmed = client.post(
+            "/places/administrative-references/confirm-match",
+            json={"original_name": "Chanéac, 07054, Ardèche, Auvergne-Rhône-Alpes, France"},
+        )
+        review = client.post(
+            "/places/administrative-references/submit-review",
+            json={
+                "original_name": "Lyon, 69003, Rhône, Auvergne-Rhône-Alpes, France",
+                "human_note": "Code à vérifier dans l'acte",
+            },
+        )
+        search = client.get("/cog/search", params={"query": "Francheville"})
+        manual = client.put(
+            "/places/administrative-references/manual-selection",
+            json={
+                "original_name": "Francheville, 69340, Rhône, Auvergne-Rhône-Alpes, France",
+                "cog_code": "69089",
+                "cog_type": "COM",
+                "latitude": 0,
+            },
+        )
+
+    assert inventory.status_code == 200
+    assert {entry["diagnostic"]["classification"] for entry in inventory.json()} == {
+        "MATCHED", "REVIEW", "NO_MATCH"
+    }
+    chaneac = next(
+        entry for entry in inventory.json()
+        if entry["original_name"].startswith("Chanéac,")
+    )
+    assert chaneac["diagnostic"]["candidate"]["type"] == "COM"
+    assert chaneac["diagnostic"]["candidate"]["historical_name"] is None
+    assert chaneac["diagnostic"]["candidate"]["valid_to"] is None
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "CONFIRMED"
+    assert confirmed.json()["commune"] == "Chanéac"
+    assert review.status_code == 200
+    assert review.json()["status"] == "REVIEW"
+    assert review.json()["human_note"] == "Code à vérifier dans l'acte"
+    assert search.status_code == 200
+    assert any(candidate["code"] == "69089" for candidate in search.json())
+    assert manual.status_code == 422
+    assert enrichments.get_all() == {}
+
+
+def test_administrative_manual_selection_uses_only_cog_identity_and_can_be_removed():
+    original_name = "Francheville, 69340, Rhône, Auvergne-Rhône-Alpes, France"
+    genealogy = Genealogy(persons={
+        "@I1@": Person(id="@I1@", events=[Event(type="BIRT", place=Place(original_name=original_name))])
+    })
+    references = InMemoryAdministrativeReferenceStore()
+    with TestClient(create_app(genealogy, administrative_reference_store=references)) as client:
+        selected = client.put(
+            "/places/administrative-references/manual-selection",
+            json={"original_name": original_name, "cog_code": "69089", "cog_type": "COM"},
+        )
+        removed = client.request(
+            "DELETE", "/places/administrative-references", json={"original_name": original_name},
+        )
+
+    assert selected.status_code == 200
+    assert selected.json()["commune"] == "Francheville"
+    assert selected.json()["status"] == "CONFIRMED"
+    assert removed.status_code == 204
+    assert references.get(original_name) is None
+
+
+def test_administrative_confirmation_preserves_historical_and_arm_cog_identity_without_enrichment():
+    places = [
+        "Paris 12, 75112, Paris, Île-de-France, France",
+        "Bellegarde-sur-Valserine, 01033, Ain, Auvergne-Rhône-Alpes, France",
+        "Bois-Rézolle, Les Salles, 42295, Loire, Auvergne-Rhône-Alpes, France",
+    ]
+    genealogy = Genealogy(persons={
+        "@I1@": Person(id="@I1@", events=[
+            Event(type="BIRT", place=Place(original_name=name)) for name in places
+        ])
+    })
+    enrichments = InMemoryPlaceEnrichmentStore()
+    references = InMemoryAdministrativeReferenceStore()
+
+    with TestClient(create_app(
+        genealogy, place_enrichment_store=enrichments,
+        administrative_reference_store=references,
+    )) as client:
+        results = [client.post(
+            "/places/administrative-references/confirm-match",
+            json={"original_name": name},
+        ) for name in places]
+
+    assert all(result.status_code == 200 for result in results)
+    paris, bellegarde, bois_rezolle = [result.json() for result in results]
+    assert paris["cog_type"] == "ARM"
+    assert paris["department"] == "Paris"
+    assert paris["region"] == "Île-de-France"
+    assert bellegarde["historical_name"] == "Bellegarde-sur-Valserine"
+    assert bois_rezolle["commune"] == "Salles"
+    assert enrichments.get_all() == {}
+
+
+def test_administrative_inventory_marks_an_obsolete_reference_without_rewriting_it():
+    original_name = "Chanéac, 07054, Ardèche, Auvergne-Rhône-Alpes, France"
+    genealogy = Genealogy(persons={
+        "@I1@": Person(id="@I1@", events=[Event(type="BIRT", place=Place(original_name=original_name))])
+    })
+    references = InMemoryAdministrativeReferenceStore()
+    stale = AdministrativeReference(
+        original_name=original_name, source="insee_cog", vintage="2025",
+        cog_code="07054", cog_type="COM", commune="Chanéac",
+        department_code="07", department="Ardèche", region_code="84",
+        region="Auvergne-Rhône-Alpes", historical_name=None, valid_from=None,
+        valid_to=None, match_method="CURRENT_CODE_AND_NAME",
+        status=AdministrativeReferenceStatus.CONFIRMED,
+    )
+    references.save(stale)
+
+    with TestClient(create_app(genealogy, administrative_reference_store=references)) as client:
+        response = client.get("/places/administrative-references")
+
+    assert response.status_code == 200
+    assert response.json()[0]["reference_is_current"] is False
+    assert references.get(original_name) == stale

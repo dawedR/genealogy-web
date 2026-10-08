@@ -25,6 +25,12 @@ from fastapi import (
 )
 
 from src.api.schemas import (
+    AdministrativeReferenceDeleteRequest,
+    AdministrativeReferenceInventoryResponse,
+    AdministrativeReferenceManualSelectionRequest,
+    AdministrativeReferenceMatchRequest,
+    AdministrativeReferenceResponse,
+    AdministrativeReferenceReviewRequest,
     AncestorPlaceOccurrenceResponse,
     AncestorResponse,
     CombinedTreeOptionsResponse,
@@ -66,6 +72,8 @@ from src.api.schemas import (
     UnionLayoutNodeResponse,
 )
 from src.domain.models import (
+    AdministrativeReference,
+    AdministrativeReferenceStatus,
     Genealogy,
     GeographicReference,
     ImportReport,
@@ -77,7 +85,7 @@ from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
 from src.services.ancestry_geography import build_ancestry_geography
 from src.services.colors import ColorConfiguration, ColorResult, ColorService, GeoPoint
-from src.services.cog import CogCandidate, CogResolver
+from src.services.cog import COG_VINTAGE, CogCandidate, CogResolver
 from src.services.combined_tree import (
     CombinedTreeOptions,
     CycleTruncatedDiagnostic,
@@ -119,6 +127,11 @@ from src.storage.place_enrichments import (
     InMemoryPlaceEnrichmentStore,
     JsonPlaceEnrichmentStore,
     PlaceEnrichmentStore,
+)
+from src.storage.administrative_references import (
+    AdministrativeReferenceStore,
+    InMemoryAdministrativeReferenceStore,
+    JsonAdministrativeReferenceStore,
 )
 
 
@@ -286,6 +299,7 @@ def create_app(
     cog_resolver: CogResolver | None = None,
     portrait_resolver: PortraitResolver | None = None,
     root_path: str | None = None,
+    administrative_reference_store: AdministrativeReferenceStore | None = None,
 ) -> FastAPI:
     configured_root_path = normalize_app_root_path(
         os.environ.get("APP_ROOT_PATH") if root_path is None else root_path
@@ -295,6 +309,9 @@ def create_app(
     geneweb_portraits_dir = os.environ.get("GENEWEB_PORTRAITS_DIR")
     initial_place_enrichment_store = (
         place_enrichment_store or InMemoryPlaceEnrichmentStore()
+    )
+    initial_administrative_reference_store = (
+        administrative_reference_store or InMemoryAdministrativeReferenceStore()
     )
     initial_geocoder = geocoder or UnavailableGeocoder()
     initial_cog_resolver = cog_resolver or CogResolver.bundled()
@@ -311,6 +328,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.genealogy = initial_genealogy
         app.state.place_enrichment_store = initial_place_enrichment_store
+        app.state.administrative_reference_store = initial_administrative_reference_store
         app.state.geocoder = initial_geocoder
         app.state.cog_resolver = initial_cog_resolver
         app.state.pending_geocoding_candidates = pending_geocoding_candidates
@@ -545,6 +563,106 @@ def create_app(
             for entry in inventory_places(_genealogy(request))
             if _is_french_place(entry.original_name)
         ]
+
+    @app.get(
+        "/places/administrative-references",
+        response_model=list[AdministrativeReferenceInventoryResponse],
+    )
+    def administrative_references(
+        request: Request,
+    ) -> list[AdministrativeReferenceInventoryResponse]:
+        resolver = _cog_resolver(request)
+        references = _administrative_reference_store(request).get_all()
+        return [
+            AdministrativeReferenceInventoryResponse(
+                original_name=entry.original_name,
+                occurrences_count=entry.occurrences_count,
+                diagnostic=_cog_diagnostic_response(resolver.resolve(entry.original_name)),
+                reference=_administrative_reference_response(
+                    references.get(entry.original_name)
+                ),
+                reference_is_current=_administrative_reference_is_current(
+                    references.get(entry.original_name), resolver
+                ),
+            )
+            for entry in inventory_places(_genealogy(request))
+            if _is_french_place(entry.original_name)
+        ]
+
+    @app.post(
+        "/places/administrative-references/confirm-match",
+        response_model=AdministrativeReferenceResponse,
+    )
+    def confirm_administrative_match(
+        payload: AdministrativeReferenceMatchRequest,
+        request: Request,
+    ) -> AdministrativeReferenceResponse:
+        _ensure_known_french_place(request, payload.original_name)
+        resolution = _cog_resolver(request).resolve(payload.original_name)
+        if resolution.classification.value != "MATCHED" or resolution.candidate is None:
+            raise HTTPException(status_code=409, detail="COG match is not currently confirmable")
+        reference = _administrative_reference_from_candidate(
+            payload.original_name, resolution.candidate, resolution.method.value,
+            AdministrativeReferenceStatus.CONFIRMED, None,
+        )
+        _administrative_reference_store(request).save(reference)
+        return _administrative_reference_response(reference)
+
+    @app.post(
+        "/places/administrative-references/submit-review",
+        response_model=AdministrativeReferenceResponse,
+    )
+    def submit_administrative_review(
+        payload: AdministrativeReferenceReviewRequest,
+        request: Request,
+    ) -> AdministrativeReferenceResponse:
+        _ensure_known_french_place(request, payload.original_name)
+        resolution = _cog_resolver(request).resolve(payload.original_name)
+        if resolution.classification.value != "REVIEW" or resolution.candidate is None:
+            raise HTTPException(status_code=409, detail="COG proposal is not currently reviewable")
+        reference = _administrative_reference_from_candidate(
+            payload.original_name, resolution.candidate, resolution.method.value,
+            AdministrativeReferenceStatus.REVIEW, _optional_note(payload.human_note),
+        )
+        _administrative_reference_store(request).save(reference)
+        return _administrative_reference_response(reference)
+
+    @app.get("/cog/search", response_model=list[CogCandidateResponse])
+    def search_cog(
+        request: Request,
+        query: str = Query(min_length=1, max_length=120),
+    ) -> list[CogCandidateResponse]:
+        return [
+            _cog_candidate_response(candidate)
+            for candidate in _cog_resolver(request).search(query)
+        ]
+
+    @app.put(
+        "/places/administrative-references/manual-selection",
+        response_model=AdministrativeReferenceResponse,
+    )
+    def select_administrative_reference(
+        payload: AdministrativeReferenceManualSelectionRequest,
+        request: Request,
+    ) -> AdministrativeReferenceResponse:
+        _ensure_known_french_place(request, payload.original_name)
+        candidate = _cog_resolver(request).lookup(payload.cog_code, payload.cog_type)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="COG reference not found")
+        reference = _administrative_reference_from_candidate(
+            payload.original_name, candidate, "MANUAL_COG_SELECTION",
+            AdministrativeReferenceStatus.CONFIRMED, _optional_note(payload.human_note),
+        )
+        _administrative_reference_store(request).save(reference)
+        return _administrative_reference_response(reference)
+
+    @app.delete("/places/administrative-references", status_code=204)
+    def delete_administrative_reference(
+        payload: AdministrativeReferenceDeleteRequest,
+        request: Request,
+    ) -> None:
+        _ensure_known_french_place(request, payload.original_name)
+        _administrative_reference_store(request).delete(payload.original_name)
 
     @app.get(
         "/place-reconciliation/historical",
@@ -1225,6 +1343,16 @@ def _place_enrichment_store(request: Request) -> PlaceEnrichmentStore:
     return request.app.state.place_enrichment_store
 
 
+def _administrative_reference_store(request: Request) -> AdministrativeReferenceStore:
+    return request.app.state.administrative_reference_store
+
+
+def _ensure_known_french_place(request: Request, original_name: str) -> None:
+    _ensure_known_place(request, original_name)
+    if not _is_french_place(original_name):
+        raise HTTPException(status_code=422, detail="Place is not a French COG candidate")
+
+
 def _birth_place_color_service(
     genealogy: Genealogy,
     root_person_id: str,
@@ -1354,6 +1482,80 @@ def _cog_candidate_response(candidate: CogCandidate) -> CogCandidateResponse:
     )
 
 
+def _administrative_reference_from_candidate(
+    original_name: str,
+    candidate: CogCandidate,
+    match_method: str,
+    status: AdministrativeReferenceStatus,
+    human_note: str | None,
+) -> AdministrativeReference:
+    return AdministrativeReference(
+        original_name=original_name,
+        source="insee_cog",
+        vintage=candidate.vintage,
+        cog_code=candidate.code,
+        cog_type=candidate.type,
+        commune=candidate.commune,
+        department_code=candidate.department_code,
+        department=candidate.department,
+        region_code=candidate.region_code,
+        region=candidate.region,
+        historical_name=candidate.historical_name,
+        valid_from=candidate.valid_from,
+        valid_to=candidate.valid_to,
+        match_method=match_method,
+        status=status,
+        human_note=human_note,
+    )
+
+
+def _administrative_reference_response(
+    reference: AdministrativeReference | None,
+) -> AdministrativeReferenceResponse | None:
+    if reference is None:
+        return None
+    return AdministrativeReferenceResponse(
+        original_name=reference.original_name,
+        source=reference.source,
+        vintage=reference.vintage,
+        cog_code=reference.cog_code,
+        cog_type=reference.cog_type,
+        commune=reference.commune,
+        department_code=reference.department_code,
+        department=reference.department,
+        region_code=reference.region_code,
+        region=reference.region,
+        historical_name=reference.historical_name,
+        valid_from=reference.valid_from,
+        valid_to=reference.valid_to,
+        match_method=reference.match_method,
+        status=reference.status.value,
+        human_note=reference.human_note,
+    )
+
+
+def _administrative_reference_is_current(
+    reference: AdministrativeReference | None,
+    resolver: CogResolver,
+) -> bool | None:
+    """Flag stale persisted identities without changing a human decision."""
+
+    if reference is None:
+        return None
+    return (
+        reference.source == "insee_cog"
+        and reference.vintage == COG_VINTAGE
+        and resolver.lookup(reference.cog_code, reference.cog_type) is not None
+    )
+
+
+def _optional_note(value: str | None) -> str | None:
+    if value is None:
+        return None
+    note = value.strip()
+    return note or None
+
+
 def _is_french_place(original_name: str) -> bool:
     return "france" in original_name.casefold()
 
@@ -1435,5 +1637,8 @@ def _configured_geocoder() -> Geocoder:
 
 app = create_app(
     place_enrichment_store=JsonPlaceEnrichmentStore(Path("data/place_enrichments.json")),
+    administrative_reference_store=JsonAdministrativeReferenceStore(
+        Path("data/administrative_references.json")
+    ),
     geocoder=_configured_geocoder(),
 )
