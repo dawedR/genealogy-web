@@ -257,6 +257,258 @@ def test_get_places_inventory():
     ]
 
 
+def test_historical_place_reconciliation_endpoint_is_read_only_and_explainable():
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[
+                    Event(
+                        type="BIRT",
+                        place=Place(
+                            original_name=(
+                                "Odrzywół, powiat d'Opoczno, gouvernement de "
+                                "Radom, Pologne"
+                            )
+                        ),
+                    ),
+                    Event(
+                        type="BIRT",
+                        place=Place(original_name="Wysokie, Pologne"),
+                    ),
+                    Event(
+                        type="BIRT",
+                        place=Place(original_name="Exact, France"),
+                    ),
+                ],
+            )
+        }
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(
+        PlaceEnrichment(
+            original_name="Odrzywół, powiat (district) d’Opoczno, Radom, Pologne",
+            normalized_name="Odrzywół, Poland",
+            latitude=51.519582,
+            longitude=20.554617,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+    store.save(
+        PlaceEnrichment(
+            original_name="Wysokie (A), Pologne",
+            latitude=50.0,
+            longitude=20.0,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+    store.save(
+        PlaceEnrichment(
+            original_name="Wysokie (B), Pologne",
+            latitude=51.0,
+            longitude=21.0,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+    exact = PlaceEnrichment(
+        original_name="Exact, France",
+        latitude=45.0,
+        longitude=4.0,
+        status=PlaceEnrichmentStatus.VALIDATED,
+    )
+    store.save(exact)
+
+    with TestClient(create_app(genealogy, place_enrichment_store=store)) as client:
+        response = client.get("/place-reconciliation/historical")
+
+    assert response.status_code == 200
+    results = {item["source_original_name"]: item for item in response.json()}
+    assert set(results) == {
+        "Odrzywół, powiat d'Opoczno, gouvernement de Radom, Pologne",
+        "Wysokie, Pologne",
+    }
+    odrzywol = results[
+        "Odrzywół, powiat d'Opoczno, gouvernement de Radom, Pologne"
+    ]
+    assert odrzywol["classification"] == "STRONG_MATCH"
+    assert odrzywol["proposals"] == [
+        {
+            "source_original_name": (
+                "Odrzywół, powiat d'Opoczno, gouvernement de Radom, Pologne"
+            ),
+            "historical_original_name": (
+                "Odrzywół, powiat (district) d’Opoczno, Radom, Pologne"
+            ),
+            "historical_status": "VALIDATED",
+            "historical_normalized_name": "Odrzywół, Poland",
+            "latitude": 51.519582,
+            "longitude": 20.554617,
+            "score": 69,
+            "classification": "STRONG_MATCH",
+            "coordinate_reuse_reliability": "HIGH_CONFIDENCE",
+            "reasons": [
+                "LOCALITY_MATCH",
+                "COUNTRY_MATCH",
+                "ADMINISTRATIVE_COMPONENTS_MATCH",
+                "HISTORICAL_ENRICHMENT_VALIDATED",
+                "HISTORICAL_COORDINATES_AVAILABLE",
+            ],
+            "warnings": [],
+        }
+    ]
+    assert results["Wysokie, Pologne"]["classification"] == "AMBIGUOUS"
+    assert all(
+        proposal["classification"] == "AMBIGUOUS"
+        for proposal in results["Wysokie, Pologne"]["proposals"]
+    )
+    assert store.get("Exact, France") == exact
+
+
+def test_reuse_historical_proposal_copies_server_data_as_manual_then_can_be_validated():
+    source_name = "Odrzywół, powiat d'Opoczno, gouvernement de Radom, Pologne"
+    historical_name = "Odrzywół, powiat (district) d’Opoczno, Radom, Pologne"
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name=source_name))],
+            )
+        }
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    historical = PlaceEnrichment(
+        original_name=historical_name,
+        normalized_name="Odrzywół, Poland",
+        latitude=51.519582,
+        longitude=20.554617,
+        status=PlaceEnrichmentStatus.VALIDATED,
+        source="geoapify",
+    )
+    store.save(historical)
+
+    with TestClient(create_app(genealogy, place_enrichment_store=store)) as client:
+        forged = client.post(
+            "/place-reconciliation/historical/reuse",
+            json={
+                "source_original_name": source_name,
+                "historical_original_name": historical_name,
+                "latitude": 0,
+                "longitude": 0,
+            },
+        )
+        reused = client.post(
+            "/place-reconciliation/historical/reuse",
+            json={
+                "source_original_name": source_name,
+                "historical_original_name": historical_name,
+            },
+        )
+        validated = client.post(
+            "/place-enrichments/validate",
+            json={"original_name": source_name},
+        )
+
+    assert forged.status_code == 422
+    assert reused.status_code == 200
+    assert reused.json() == {
+        "original_name": source_name,
+        "normalized_name": "Odrzywół, Poland",
+        "latitude": 51.519582,
+        "longitude": 20.554617,
+        "status": "MANUAL",
+        "source": f"historical:{historical_name}",
+        "confidence": None,
+        "comment": None,
+    }
+    assert store.get(historical_name) == historical
+    assert validated.status_code == 200
+    assert validated.json()["status"] == "VALIDATED"
+
+
+def test_reuse_historical_review_is_explicit_and_does_not_validate_it():
+    source_name = "Les Salles, 42295, Loire, Auvergne-Rhône-Alpes, France"
+    historical_name = "Les Salles, 42295, Loire, Rhône-Alpes, France"
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name=source_name))],
+            )
+        }
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(
+        PlaceEnrichment(
+            original_name=historical_name,
+            normalized_name="42440 Les Salles, France",
+            latitude=45.8468,
+            longitude=3.79313,
+            status=PlaceEnrichmentStatus.MANUAL,
+        )
+    )
+
+    with TestClient(create_app(genealogy, place_enrichment_store=store)) as client:
+        proposals = client.get("/place-reconciliation/historical")
+        reused = client.post(
+            "/place-reconciliation/historical/reuse",
+            json={
+                "source_original_name": source_name,
+                "historical_original_name": historical_name,
+            },
+        )
+
+    assert proposals.json()[0]["classification"] == "REVIEW"
+    assert reused.status_code == 200
+    assert reused.json()["status"] == "MANUAL"
+
+
+def test_reuse_historical_proposal_rejects_missing_or_no_longer_current_proposal():
+    source_name = "Chęciny, powiat de Kielce, gouvernement de Kielce, Pologne"
+    historical_name = "Chęciny"
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[Event(type="BIRT", place=Place(original_name=source_name))],
+            )
+        }
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(
+        PlaceEnrichment(
+            original_name=historical_name,
+            normalized_name="Chęciny, Poland",
+            latitude=50.8000835,
+            longitude=20.4622228,
+            status=PlaceEnrichmentStatus.VALIDATED,
+        )
+    )
+
+    with TestClient(create_app(genealogy, place_enrichment_store=store)) as client:
+        missing = client.post(
+            "/place-reconciliation/historical/reuse",
+            json={
+                "source_original_name": source_name,
+                "historical_original_name": "Inexistant",
+            },
+        )
+        assert client.get("/place-reconciliation/historical").status_code == 200
+        genealogy.persons["@I1@"].events.append(
+            Event(type="DEAT", place=Place(original_name=historical_name))
+        )
+        stale = client.post(
+            "/place-reconciliation/historical/reuse",
+            json={
+                "source_original_name": source_name,
+                "historical_original_name": historical_name,
+            },
+        )
+
+    assert missing.status_code == 404
+    assert stale.status_code == 409
+    assert store.get(source_name) is None
+
+
 def test_upsert_place_enrichment_and_expose_it_in_inventory():
     genealogy = make_genealogy()
     genealogy.persons["@I1@"].events.append(
@@ -887,6 +1139,10 @@ def test_index_page():
         "place-geocoding-query",
         "place-geocoding-search",
         "place-geocoding-results",
+        "historical-reconciliation",
+        "historical-reconciliation-summary",
+        "historical-reconciliation-list",
+        "historical-reconciliation-show-all",
         "fan-opening",
         "fan-chart",
         "fan-legend",
@@ -910,6 +1166,10 @@ def test_static_javascript():
     assert "formatPlaceEventCounts" in response.text
     assert "renderGeocodingCandidates" in response.text
     assert "selectGeocodingCandidate" in response.text
+    assert "loadHistoricalReconciliation" in response.text
+    assert "renderHistoricalReconciliation" in response.text
+    assert "reuseHistoricalProposal" in response.text
+    assert "place-reconciliation/historical/reuse" in response.text
     assert "placeStatusLabel" in response.text
     assert "place-enrichments/validate" in response.text
     assert "loadFanChart(person.id);" in response.text
@@ -926,6 +1186,27 @@ def test_static_javascript():
         "compareLegendEntries", "existing.occurrencesCount += 1",
     ):
         assert marker in renderer.text
+
+
+def test_historical_reconciliation_frontend_moves_to_the_next_session_proposal():
+    with make_client() as client:
+        response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    script = response.text
+    skip_start = script.index('skip.addEventListener("click", () => {')
+    skip_end = script.index("actions.append(reuse, skip);", skip_start)
+    skip_handler = script[skip_start:skip_end]
+    assert "skippedHistoricalProposals.add(historicalProposalKey(proposal));" in skip_handler
+    assert "renderHistoricalReconciliation();" in skip_handler
+
+    reuse_start = script.index("async function reuseHistoricalProposal")
+    reuse_end = script.index("function historicalProposalKey", reuse_start)
+    reuse_handler = script[reuse_start:reuse_end]
+    assert "source_original_name: proposal.source_original_name" in reuse_handler
+    assert "historical_original_name: proposal.historical_original_name" in reuse_handler
+    assert "await loadPlaces();" in reuse_handler
+    assert "await loadHistoricalReconciliation();" in reuse_handler
 
 
 def test_static_portrait_fallback_assets_are_served():

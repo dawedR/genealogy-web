@@ -34,6 +34,9 @@ from src.api.schemas import (
     GeocodingCandidatesRequest,
     GeocodingCandidateSelectionRequest,
     HealthResponse,
+    HistoricalPlaceProposalResponse,
+    HistoricalPlaceReconciliationResponse,
+    HistoricalPlaceReuseRequest,
     IgnoredTagResponse,
     ImportReportResponse,
     MissingPersonReferenceDiagnosticResponse,
@@ -101,6 +104,7 @@ from src.services.geocoding import (
 )
 from src.services.geoapify import GeoapifyGeocoder
 from src.services.places import inventory_places
+from src.services.place_reconciliation import reconcile_historical_places
 from src.services.sosa import build_sosa_ancestry
 from src.services.portraits import PortraitResolver
 from src.services.tree_cards import build_tree_person_card
@@ -522,6 +526,96 @@ def create_app(
             )
             for entry in inventory_places(_genealogy(request))
         ]
+
+    @app.get(
+        "/place-reconciliation/historical",
+        response_model=list[HistoricalPlaceReconciliationResponse],
+    )
+    def historical_place_reconciliation(
+        request: Request,
+    ) -> list[HistoricalPlaceReconciliationResponse]:
+        reconciliations = reconcile_historical_places(
+            inventory_places(_genealogy(request)),
+            _place_enrichment_store(request).get_all(),
+        )
+        return [
+            HistoricalPlaceReconciliationResponse(
+                source_original_name=reconciliation.source_original_name,
+                classification=reconciliation.classification.value,
+                proposals=[
+                    HistoricalPlaceProposalResponse(
+                        source_original_name=proposal.source_original_name,
+                        historical_original_name=proposal.historical_original_name,
+                        historical_status=proposal.historical_status.value,
+                        historical_normalized_name=proposal.historical_normalized_name,
+                        latitude=proposal.latitude,
+                        longitude=proposal.longitude,
+                        score=proposal.score,
+                        classification=proposal.classification.value,
+                        coordinate_reuse_reliability=(
+                            proposal.coordinate_reuse_reliability.value
+                        ),
+                        reasons=[reason.value for reason in proposal.reasons],
+                        warnings=[warning.value for warning in proposal.warnings],
+                    )
+                    for proposal in reconciliation.proposals
+                ],
+            )
+            for reconciliation in reconciliations
+        ]
+
+    @app.post(
+        "/place-reconciliation/historical/reuse",
+        response_model=PlaceEnrichmentResponse,
+    )
+    def reuse_historical_place_enrichment(
+        payload: HistoricalPlaceReuseRequest,
+        request: Request,
+    ) -> PlaceEnrichmentResponse:
+        _ensure_known_place(request, payload.source_original_name)
+        store = _place_enrichment_store(request)
+        historical = store.get(payload.historical_original_name)
+        if historical is None:
+            raise HTTPException(status_code=404, detail="Historical enrichment not found")
+
+        reconciliation = next(
+            (
+                item
+                for item in reconcile_historical_places(
+                    inventory_places(_genealogy(request)),
+                    store.get_all(),
+                )
+                if item.source_original_name == payload.source_original_name
+            ),
+            None,
+        )
+        if (
+            reconciliation is None
+            or reconciliation.classification.value not in {"STRONG_MATCH", "REVIEW"}
+            or not any(
+                proposal.historical_original_name
+                == payload.historical_original_name
+                and proposal.classification.value in {"STRONG_MATCH", "REVIEW"}
+                for proposal in reconciliation.proposals
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Historical enrichment is not currently reusable",
+            )
+
+        enrichment = PlaceEnrichment(
+            original_name=payload.source_original_name,
+            normalized_name=historical.normalized_name,
+            latitude=historical.latitude,
+            longitude=historical.longitude,
+            status=PlaceEnrichmentStatus.MANUAL,
+            source=f"historical:{historical.original_name}",
+            confidence=None,
+            comment=None,
+        )
+        store.save(enrichment)
+        return _enrichment_response(enrichment)
 
     @app.post(
         "/geocoding/candidates",

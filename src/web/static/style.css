@@ -292,6 +292,58 @@ button {
     outline: none;
 }
 
+#historical-reconciliation {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #ddd;
+}
+
+.historical-reconciliation-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.historical-reconciliation-heading h3,
+.historical-reconciliation-heading p {
+    margin: 0;
+}
+
+#historical-reconciliation-list {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.historical-proposal {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.75rem;
+    border: 1px solid #ddd;
+    border-left: 0.35rem solid #4a7c59;
+}
+
+.historical-proposal-review {
+    border-left-color: #b7791f;
+}
+
+.historical-proposal p {
+    margin: 0;
+}
+
+.historical-proposal-warnings {
+    color: #7a1f1f;
+    font-weight: 600;
+}
+
+.historical-proposal-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
 #place-enrichment-form {
     display: grid;
     gap: 0.75rem;

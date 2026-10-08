@@ -43,6 +43,18 @@ const placeGeocodingResults = document.querySelector(
 const placeGeocodingAttribution = document.querySelector(
     "#place-geocoding-attribution",
 );
+const historicalReconciliation = document.querySelector(
+    "#historical-reconciliation",
+);
+const historicalReconciliationSummary = document.querySelector(
+    "#historical-reconciliation-summary",
+);
+const historicalReconciliationList = document.querySelector(
+    "#historical-reconciliation-list",
+);
+const historicalReconciliationShowAll = document.querySelector(
+    "#historical-reconciliation-show-all",
+);
 
 const searchForm = document.querySelector("#search-form");
 const searchQuery = document.querySelector("#search-query");
@@ -172,6 +184,10 @@ for (const control of fanLabelControls) {
 
 let selectedPersonId = null;
 let selectedPlace = null;
+let currentPlacesByOriginalName = new Map();
+let historicalReconciliations = [];
+let skippedHistoricalProposals = new Set();
+let showAllHistoricalProposals = false;
 
 
 importForm.addEventListener("submit", async (event) => {
@@ -229,6 +245,7 @@ importForm.addEventListener("submit", async (event) => {
         selectedPlace = null;
         placeEnrichmentForm.hidden = true;
         await loadPlaces();
+        await loadHistoricalReconciliation({resetSession: true});
 
         clearPersonSelection();
         searchResults.innerHTML = "";
@@ -543,6 +560,7 @@ async function selectDefaultPerson() {
 async function initializePage() {
     await loadGedcomStatus();
     await loadPlaces();
+    await loadHistoricalReconciliation({resetSession: true});
     await selectDefaultPerson();
 }
 
@@ -626,10 +644,15 @@ async function loadPlaces() {
         }
 
         if (places.length === 0) {
+            currentPlacesByOriginalName = new Map();
             placesStatus.textContent =
                 "Aucun lieu associé à un événement.";
             return [];
         }
+
+        currentPlacesByOriginalName = new Map(
+            places.map(place => [place.original_name, place]),
+        );
 
         for (const place of places) {
             const row = document.createElement("tr");
@@ -679,6 +702,208 @@ async function loadPlaces() {
         placesStatus.textContent = error.message;
         return [];
     }
+}
+
+
+historicalReconciliationShowAll.addEventListener("click", () => {
+    showAllHistoricalProposals = true;
+    renderHistoricalReconciliation();
+});
+
+
+async function loadHistoricalReconciliation({resetSession = false} = {}) {
+    if (resetSession) {
+        skippedHistoricalProposals = new Set();
+        showAllHistoricalProposals = false;
+    }
+
+    try {
+        const response = await fetch(
+            appUrl("/place-reconciliation/historical"),
+        );
+        const reconciliations = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                reconciliations.detail ||
+                "Impossible de charger les propositions historiques",
+            );
+        }
+
+        historicalReconciliations = reconciliations;
+        renderHistoricalReconciliation();
+    } catch (error) {
+        historicalReconciliations = [];
+        historicalReconciliation.hidden = false;
+        historicalReconciliationSummary.textContent = error.message;
+        historicalReconciliationList.innerHTML = "";
+        historicalReconciliationShowAll.hidden = true;
+    }
+}
+
+
+function renderHistoricalReconciliation() {
+    const counts = {
+        STRONG_MATCH: 0,
+        REVIEW: 0,
+        AMBIGUOUS: 0,
+        NO_MATCH: 0,
+    };
+    for (const reconciliation of historicalReconciliations) {
+        counts[reconciliation.classification] += 1;
+    }
+
+    historicalReconciliationSummary.textContent =
+        `${counts.STRONG_MATCH} fortes · ${counts.REVIEW} à examiner · ` +
+        `${counts.NO_MATCH} sans correspondance` +
+        (counts.AMBIGUOUS > 0 ? ` · ${counts.AMBIGUOUS} ambiguës` : "");
+
+    const proposals = historicalReconciliations
+        .filter(reconciliation =>
+            reconciliation.classification === "STRONG_MATCH" ||
+            reconciliation.classification === "REVIEW",
+        )
+        .flatMap(reconciliation => reconciliation.proposals)
+        .filter(proposal =>
+            proposal.classification === "STRONG_MATCH" ||
+            proposal.classification === "REVIEW",
+        )
+        .sort((left, right) => {
+            if (left.classification !== right.classification) {
+                return left.classification === "STRONG_MATCH" ? -1 : 1;
+            }
+            return right.score - left.score || left.source_original_name.localeCompare(
+                right.source_original_name,
+            );
+        });
+
+    historicalReconciliationList.innerHTML = "";
+    historicalReconciliation.hidden = proposals.length === 0;
+    if (proposals.length === 0) {
+        historicalReconciliationShowAll.hidden = true;
+        return;
+    }
+
+    const visibleProposals = showAllHistoricalProposals
+        ? proposals
+        : proposals.filter(proposal => !skippedHistoricalProposals.has(
+            historicalProposalKey(proposal),
+        ));
+    historicalReconciliationShowAll.hidden =
+        showAllHistoricalProposals || skippedHistoricalProposals.size === 0;
+
+    if (visibleProposals.length === 0) {
+        historicalReconciliationList.textContent =
+            "Toutes les propositions ont été passées pour cette session.";
+        return;
+    }
+
+    for (const proposal of visibleProposals) {
+        historicalReconciliationList.appendChild(
+            historicalProposalElement(proposal),
+        );
+    }
+}
+
+
+function historicalProposalElement(proposal) {
+    const container = document.createElement("article");
+    container.className = "historical-proposal " +
+        (proposal.classification === "REVIEW"
+            ? "historical-proposal-review"
+            : "historical-proposal-strong");
+
+    const sourcePlace = currentPlacesByOriginalName.get(
+        proposal.source_original_name,
+    );
+    const title = document.createElement("strong");
+    title.textContent = proposal.source_original_name +
+        (sourcePlace ? ` · ${sourcePlace.occurrences_count} occurrence(s)` : "");
+    container.appendChild(title);
+
+    const historical = document.createElement("p");
+    historical.textContent =
+        `Ancien libellé : ${proposal.historical_original_name} ` +
+        `(${proposal.historical_status})`;
+    container.appendChild(historical);
+
+    if (proposal.historical_normalized_name) {
+        const normalized = document.createElement("p");
+        normalized.textContent =
+            `Nom normalisé : ${proposal.historical_normalized_name}`;
+        container.appendChild(normalized);
+    }
+
+    const score = document.createElement("p");
+    score.textContent =
+        `Similarité documentaire : ${proposal.score} · ${proposal.classification}` +
+        ` · Réutilisation des coordonnées : ${proposal.coordinate_reuse_reliability}`;
+    container.appendChild(score);
+
+    const reasons = document.createElement("p");
+    reasons.textContent = `Raisons : ${proposal.reasons.join(" · ")}`;
+    container.appendChild(reasons);
+
+    if (proposal.warnings.length > 0) {
+        const warnings = document.createElement("p");
+        warnings.className = "historical-proposal-warnings";
+        warnings.textContent = `À vérifier : ${proposal.warnings.join(" · ")}`;
+        container.appendChild(warnings);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "historical-proposal-actions";
+    const reuse = document.createElement("button");
+    reuse.type = "button";
+    reuse.textContent = "Réutiliser";
+    reuse.addEventListener("click", () => {
+        void reuseHistoricalProposal(proposal);
+    });
+    const skip = document.createElement("button");
+    skip.type = "button";
+    skip.textContent = "Passer";
+    skip.addEventListener("click", () => {
+        skippedHistoricalProposals.add(historicalProposalKey(proposal));
+        renderHistoricalReconciliation();
+    });
+    actions.append(reuse, skip);
+    container.appendChild(actions);
+    return container;
+}
+
+
+async function reuseHistoricalProposal(proposal) {
+    try {
+        const response = await fetch(
+            appUrl("/place-reconciliation/historical/reuse"),
+            {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    source_original_name: proposal.source_original_name,
+                    historical_original_name: proposal.historical_original_name,
+                }),
+            },
+        );
+        const enrichment = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                enrichment.detail ||
+                "Impossible de réutiliser l’enrichissement historique",
+            );
+        }
+
+        await loadPlaces();
+        await loadHistoricalReconciliation();
+        placesStatus.textContent = "Enrichissement historique réutilisé.";
+    } catch (error) {
+        placesStatus.textContent = error.message;
+    }
+}
+
+
+function historicalProposalKey(proposal) {
+    return `${proposal.source_original_name}\u0000${proposal.historical_original_name}`;
 }
 
 

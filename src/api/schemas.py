@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class PersonResponse(BaseModel):
@@ -85,6 +85,33 @@ class PlaceInventoryResponse(BaseModel):
     persons_count: int
     event_counts: dict[str, int]
     enrichment: PlaceEnrichmentResponse | None
+
+
+class HistoricalPlaceProposalResponse(BaseModel):
+    source_original_name: str
+    historical_original_name: str
+    historical_status: str
+    historical_normalized_name: str | None
+    latitude: float | None
+    longitude: float | None
+    score: int
+    classification: str
+    coordinate_reuse_reliability: str
+    reasons: list[str]
+    warnings: list[str]
+
+
+class HistoricalPlaceReconciliationResponse(BaseModel):
+    source_original_name: str
+    classification: str
+    proposals: list[HistoricalPlaceProposalResponse]
+
+
+class HistoricalPlaceReuseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_original_name: str
+    historical_original_name: str
 
 
 class GeocodingCandidatesRequest(BaseModel):
