@@ -258,6 +258,70 @@ def test_get_places_inventory():
     ]
 
 
+def test_cog_diagnostic_endpoint_is_read_only_and_french_only():
+    genealogy = Genealogy(
+        persons={
+            "@I1@": Person(
+                id="@I1@",
+                events=[
+                    Event(
+                        type="BIRT",
+                        place=Place(
+                            original_name=(
+                                "Paris 12, 75112, Paris, Île-de-France, France"
+                            )
+                        ),
+                    ),
+                    Event(
+                        type="BIRT",
+                        place=Place(
+                            original_name=(
+                                "Lyon, 69003, Rhône, Auvergne-Rhône-Alpes, France"
+                            )
+                        ),
+                    ),
+                    Event(
+                        type="BIRT",
+                        place=Place(original_name="Odrzywół, Pologne"),
+                    ),
+                ],
+            )
+        }
+    )
+    store = InMemoryPlaceEnrichmentStore()
+
+    with TestClient(create_app(genealogy, place_enrichment_store=store)) as client:
+        response = client.get("/places/cog-diagnostics")
+
+    assert response.status_code == 200
+    diagnostics = {item["original_name"]: item for item in response.json()}
+    assert set(diagnostics) == {
+        "Paris 12, 75112, Paris, Île-de-France, France",
+        "Lyon, 69003, Rhône, Auvergne-Rhône-Alpes, France",
+    }
+    paris = diagnostics["Paris 12, 75112, Paris, Île-de-France, France"]
+    assert paris["classification"] == "MATCHED"
+    assert paris["source_code_kind"] == "COG_CONFIRMED"
+    assert paris["candidate"] == {
+        "code": "75112",
+        "type": "ARM",
+        "vintage": "2026",
+        "commune": "Paris 12e Arrondissement",
+        "department_code": "75",
+        "department": "Paris",
+        "region_code": "11",
+        "region": "Île-de-France",
+        "historical_name": None,
+        "valid_from": None,
+        "valid_to": None,
+    }
+    lyon = diagnostics["Lyon, 69003, Rhône, Auvergne-Rhône-Alpes, France"]
+    assert lyon["classification"] == "REVIEW"
+    assert lyon["source_code_kind"] == "UNCONFIRMED_FIVE_DIGIT"
+    assert lyon["candidate"]["commune"] == "Albigny-sur-Saône"
+    assert store.get_all() == {}
+
+
 def test_historical_place_reconciliation_endpoint_is_read_only_and_explainable():
     genealogy = Genealogy(
         persons={

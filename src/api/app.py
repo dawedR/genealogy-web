@@ -30,6 +30,8 @@ from src.api.schemas import (
     CombinedTreeOptionsResponse,
     CombinedTreeResponse,
     CycleTruncatedDiagnosticResponse,
+    CogCandidateResponse,
+    CogDiagnosticResponse,
     GeocodingCandidateResponse,
     GeocodingCandidatesRequest,
     GeocodingCandidateSelectionRequest,
@@ -75,6 +77,7 @@ from src.gedcom.importer import import_gedcom
 from src.services.ancestry import get_ancestors
 from src.services.ancestry_geography import build_ancestry_geography
 from src.services.colors import ColorConfiguration, ColorResult, ColorService, GeoPoint
+from src.services.cog import CogCandidate, CogResolver
 from src.services.combined_tree import (
     CombinedTreeOptions,
     CycleTruncatedDiagnostic,
@@ -280,6 +283,7 @@ def create_app(
     genealogy: Genealogy | None = None,
     place_enrichment_store: PlaceEnrichmentStore | None = None,
     geocoder: Geocoder | None = None,
+    cog_resolver: CogResolver | None = None,
     portrait_resolver: PortraitResolver | None = None,
     root_path: str | None = None,
 ) -> FastAPI:
@@ -293,6 +297,7 @@ def create_app(
         place_enrichment_store or InMemoryPlaceEnrichmentStore()
     )
     initial_geocoder = geocoder or UnavailableGeocoder()
+    initial_cog_resolver = cog_resolver or CogResolver.bundled()
     initial_portrait_resolver = portrait_resolver or PortraitResolver(
         registry_path=Path("data/portraits.json"),
         portraits_root=Path("data/portraits"),
@@ -307,6 +312,7 @@ def create_app(
         app.state.genealogy = initial_genealogy
         app.state.place_enrichment_store = initial_place_enrichment_store
         app.state.geocoder = initial_geocoder
+        app.state.cog_resolver = initial_cog_resolver
         app.state.pending_geocoding_candidates = pending_geocoding_candidates
         app.state.portrait_resolver = initial_portrait_resolver
         app.state.genealogy_provenance = _GenealogyProvenance()
@@ -527,6 +533,17 @@ def create_app(
                 ),
             )
             for entry in inventory_places(_genealogy(request))
+        ]
+
+    @app.get(
+        "/places/cog-diagnostics",
+        response_model=list[CogDiagnosticResponse],
+    )
+    def cog_diagnostics(request: Request) -> list[CogDiagnosticResponse]:
+        return [
+            _cog_diagnostic_response(_cog_resolver(request).resolve(entry.original_name))
+            for entry in inventory_places(_genealogy(request))
+            if _is_french_place(entry.original_name)
         ]
 
     @app.get(
@@ -1188,6 +1205,10 @@ def _geocoder(request: Request) -> Geocoder:
     return request.app.state.geocoder
 
 
+def _cog_resolver(request: Request) -> CogResolver:
+    return request.app.state.cog_resolver
+
+
 def _pending_geocoding_candidates(request: Request) -> _PendingGeocodingCandidates:
     return request.app.state.pending_geocoding_candidates
 
@@ -1298,6 +1319,43 @@ def _enrichment_response(
         ),
         coordinates_overridden=enrichment.coordinates_overridden,
     )
+
+
+def _cog_diagnostic_response(resolution) -> CogDiagnosticResponse:
+    return CogDiagnosticResponse(
+        original_name=resolution.original_name,
+        source_code=resolution.source_code,
+        source_code_kind=resolution.source_code_kind.value,
+        candidate=(
+            _cog_candidate_response(resolution.candidate)
+            if resolution.candidate is not None
+            else None
+        ),
+        method=resolution.method.value,
+        classification=resolution.classification.value,
+        reasons=[reason.value for reason in resolution.reasons],
+        warnings=[warning.value for warning in resolution.warnings],
+    )
+
+
+def _cog_candidate_response(candidate: CogCandidate) -> CogCandidateResponse:
+    return CogCandidateResponse(
+        code=candidate.code,
+        type=candidate.type,
+        vintage=candidate.vintage,
+        commune=candidate.commune,
+        department_code=candidate.department_code,
+        department=candidate.department,
+        region_code=candidate.region_code,
+        region=candidate.region,
+        historical_name=candidate.historical_name,
+        valid_from=candidate.valid_from,
+        valid_to=candidate.valid_to,
+    )
+
+
+def _is_french_place(original_name: str) -> bool:
+    return "france" in original_name.casefold()
 
 
 def _geographic_reference_response(

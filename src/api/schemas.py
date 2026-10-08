@@ -115,6 +115,31 @@ class PlaceInventoryResponse(BaseModel):
     enrichment: PlaceEnrichmentResponse | None
 
 
+class CogCandidateResponse(BaseModel):
+    code: str
+    type: str
+    vintage: str
+    commune: str
+    department_code: str | None
+    department: str | None
+    region_code: str | None
+    region: str | None
+    historical_name: str | None
+    valid_from: str | None
+    valid_to: str | None
+
+
+class CogDiagnosticResponse(BaseModel):
+    original_name: str
+    source_code: str | None
+    source_code_kind: str
+    candidate: CogCandidateResponse | None
+    method: str
+    classification: str
+    reasons: list[str]
+    warnings: list[str]
+
+
 class HistoricalPlaceProposalResponse(BaseModel):
     source_original_name: str
     historical_original_name: str

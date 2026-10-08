@@ -1,0 +1,16 @@
+{
+  "source": "Institut national de la statistique et des études économiques (Insee), Code officiel géographique",
+  "source_url": "https://www.insee.fr/fr/information/8740222",
+  "vintage": "2026",
+  "effective_date": "2026-01-01",
+  "downloaded_at": "2026-10-08",
+  "license": "Licence Ouverte / Open Licence 2.0 (Etalab)",
+  "attribution": "Source : Insee — Code officiel géographique 2026",
+  "files": {
+    "communes.csv": "7be1153de3a63df48fa0ca77f8490c8a0c5c9c4eb12f5cec1ca7f70b0237b1d3",
+    "departements.csv": "513900ca23edc682ef9b912d7bfc317129eac3a7d71ff19bc22b40ea4838e6eb",
+    "regions.csv": "d903566d9c0d263389d279baea6761917b7460749a07bec8ba37dd8f2ff7d98a",
+    "communes_depuis_1943.csv": "08c532ed8dade0a048aa4e1d72b8a25852a3aa05ce79c7911276031235d6eeee",
+    "evenements_communes.csv": "8b339fad8232e97233af3fd9468715af845e2cf8b14cb67b24d9a301ef8645f1"
+  }
+}
