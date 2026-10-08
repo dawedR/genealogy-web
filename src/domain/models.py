@@ -31,6 +31,41 @@ class PlaceEnrichmentStatus(str, Enum):
 
 
 @dataclass(frozen=True)
+class GeographicReference:
+    """Immutable provider snapshot retained separately from active place data."""
+
+    provider: str
+    provider_id: str
+    formatted: str
+    latitude: float
+    longitude: float
+    language: str | None = None
+    country: str | None = None
+    country_code: str | None = None
+    state: str | None = None
+    state_code: str | None = None
+    county: str | None = None
+    county_code: str | None = None
+    city: str | None = None
+    suburb: str | None = None
+    district: str | None = None
+    postcode: str | None = None
+    result_type: str | None = None
+    datasource_name: str | None = None
+    datasource_attribution: str | None = None
+    datasource_license: str | None = None
+    datasource_url: str | None = None
+    rank_confidence: float | None = None
+    rank_match_type: str | None = None
+
+    def __post_init__(self) -> None:
+        if not -90 <= self.latitude <= 90:
+            raise ValueError("geographic reference latitude must be between -90 and 90")
+        if not -180 <= self.longitude <= 180:
+            raise ValueError("geographic reference longitude must be between -180 and 180")
+
+
+@dataclass(frozen=True)
 class PlaceEnrichment:
     """Local metadata associated with one exact GEDCOM place label."""
 
@@ -42,6 +77,7 @@ class PlaceEnrichment:
     source: str | None = None
     confidence: float | None = None
     comment: str | None = None
+    geographic_reference: GeographicReference | None = None
 
     def __post_init__(self) -> None:
         if self.latitude is not None and not -90 <= self.latitude <= 90:
@@ -56,6 +92,18 @@ class PlaceEnrichment:
             raise ValueError(
                 "VALIDATED place enrichments require latitude and longitude"
             )
+
+    @property
+    def coordinates_overridden(self) -> bool:
+        """Whether active coordinates no longer equal the provider snapshot."""
+
+        return (
+            self.geographic_reference is not None
+            and (
+                self.latitude != self.geographic_reference.latitude
+                or self.longitude != self.geographic_reference.longitude
+            )
+        )
 
 
 @dataclass

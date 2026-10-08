@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 from src.domain.models import (
+    GeographicReference,
     PlaceEnrichment,
     PlaceEnrichmentStatus,
 )
@@ -137,7 +138,7 @@ def _storage_key(original_name: str) -> str:
 
 
 def _serialize_enrichment(enrichment: PlaceEnrichment) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "original_name": enrichment.original_name,
         "normalized_name": enrichment.normalized_name,
         "latitude": enrichment.latitude,
@@ -147,6 +148,11 @@ def _serialize_enrichment(enrichment: PlaceEnrichment) -> dict[str, object]:
         "confidence": enrichment.confidence,
         "comment": enrichment.comment,
     }
+    if enrichment.geographic_reference is not None:
+        payload["geographic_reference"] = _serialize_geographic_reference(
+            enrichment.geographic_reference
+        )
+    return payload
 
 
 def _deserialize_enrichment(payload: Mapping[str, object]) -> PlaceEnrichment:
@@ -159,6 +165,69 @@ def _deserialize_enrichment(payload: Mapping[str, object]) -> PlaceEnrichment:
         source=_optional_string(payload, "source"),
         confidence=_optional_number(payload, "confidence"),
         comment=_optional_string(payload, "comment"),
+        geographic_reference=_optional_geographic_reference(
+            payload.get("geographic_reference")
+        ),
+    )
+
+
+def _serialize_geographic_reference(reference: GeographicReference) -> dict[str, object]:
+    return {
+        "provider": reference.provider,
+        "provider_id": reference.provider_id,
+        "formatted": reference.formatted,
+        "latitude": reference.latitude,
+        "longitude": reference.longitude,
+        "language": reference.language,
+        "country": reference.country,
+        "country_code": reference.country_code,
+        "state": reference.state,
+        "state_code": reference.state_code,
+        "county": reference.county,
+        "county_code": reference.county_code,
+        "city": reference.city,
+        "suburb": reference.suburb,
+        "district": reference.district,
+        "postcode": reference.postcode,
+        "result_type": reference.result_type,
+        "datasource_name": reference.datasource_name,
+        "datasource_attribution": reference.datasource_attribution,
+        "datasource_license": reference.datasource_license,
+        "datasource_url": reference.datasource_url,
+        "rank_confidence": reference.rank_confidence,
+        "rank_match_type": reference.rank_match_type,
+    }
+
+
+def _optional_geographic_reference(value: object) -> GeographicReference | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("Invalid geographic_reference")
+    return GeographicReference(
+        provider=_required_string(value, "provider"),
+        provider_id=_required_string(value, "provider_id"),
+        formatted=_required_string(value, "formatted"),
+        latitude=_required_number(value, "latitude"),
+        longitude=_required_number(value, "longitude"),
+        language=_optional_string(value, "language"),
+        country=_optional_string(value, "country"),
+        country_code=_optional_string(value, "country_code"),
+        state=_optional_string(value, "state"),
+        state_code=_optional_string(value, "state_code"),
+        county=_optional_string(value, "county"),
+        county_code=_optional_string(value, "county_code"),
+        city=_optional_string(value, "city"),
+        suburb=_optional_string(value, "suburb"),
+        district=_optional_string(value, "district"),
+        postcode=_optional_string(value, "postcode"),
+        result_type=_optional_string(value, "result_type"),
+        datasource_name=_optional_string(value, "datasource_name"),
+        datasource_attribution=_optional_string(value, "datasource_attribution"),
+        datasource_license=_optional_string(value, "datasource_license"),
+        datasource_url=_optional_string(value, "datasource_url"),
+        rank_confidence=_optional_number(value, "rank_confidence"),
+        rank_match_type=_optional_string(value, "rank_match_type"),
     )
 
 
@@ -196,3 +265,10 @@ def _optional_number(
         raise ValueError(f"Invalid place enrichment {field}")
 
     return float(value)
+
+
+def _required_number(payload: Mapping[str, object], field: str) -> float:
+    value = _optional_number(payload, field)
+    if value is None:
+        raise ValueError(f"Invalid geographic_reference {field}")
+    return value

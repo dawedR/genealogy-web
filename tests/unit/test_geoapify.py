@@ -31,7 +31,7 @@ def test_geoapify_geocoder_maps_structured_candidates(monkeypatch):
         captured["url"] = request.full_url
         captured["timeout"] = timeout
         return FakeResponse(
-            '{"results": [{"place_id": "123", "formatted": "Écully, France", "lat": 45.777, "lon": 4.778, "city": "Écully", "postcode": "69130", "state": "Rhône", "country": "France", "result_type": "city"}]}'
+            '{"results": [{"place_id": "123", "formatted": "Écully, France", "lat": 45.777, "lon": 4.778, "city": "Écully", "suburb": "Le Centre", "district": "Lyon", "postcode": "69130", "county": "Rhône", "county_code": "69", "state": "Auvergne-Rhône-Alpes", "state_code": "ARA", "country": "France", "country_code": "fr", "result_type": "city", "datasource": {"sourcename": "openstreetmap", "attribution": "© OpenStreetMap contributors", "license": "ODbL", "url": "https://www.openstreetmap.org/copyright"}, "rank": {"confidence": 0.98, "match_type": "full_match"}}]}'
         )
 
     monkeypatch.setattr("src.services.geoapify.urlopen", fake_urlopen)
@@ -44,10 +44,17 @@ def test_geoapify_geocoder_maps_structured_candidates(monkeypatch):
     assert "text=%C3%89cully" in captured["url"]
     assert "format=json" in captured["url"]
     assert "limit=5" in captured["url"]
+    assert "lang=fr" in captured["url"]
     assert captured["timeout"] == 2
     assert candidates[0].display_name == "Écully, France"
     assert candidates[0].provider == "geoapify"
     assert candidates[0].city == "Écully"
+    assert candidates[0].country_code == "fr"
+    assert candidates[0].county == "Rhône"
+    assert candidates[0].district == "Lyon"
+    assert candidates[0].datasource_attribution == "© OpenStreetMap contributors"
+    assert candidates[0].rank_confidence == 0.98
+    assert candidates[0].language == "fr"
 
 
 def test_geoapify_geocoder_converts_network_errors(monkeypatch):

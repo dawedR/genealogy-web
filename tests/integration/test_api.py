@@ -14,6 +14,7 @@ from src.services.tree_view import PORTRAIT_TREE_LAYOUT_CONFIGURATION
 from src.domain.models import (
     Event,
     Family,
+    GeographicReference,
     Genealogy,
     Person,
     Place,
@@ -383,6 +384,13 @@ def test_reuse_historical_proposal_copies_server_data_as_manual_then_can_be_vali
         longitude=20.554617,
         status=PlaceEnrichmentStatus.VALIDATED,
         source="geoapify",
+        geographic_reference=GeographicReference(
+            provider="geoapify",
+            provider_id="historical-provider-id",
+            formatted="Odrzywół, Poland",
+            latitude=51.519582,
+            longitude=20.554617,
+        ),
     )
     store.save(historical)
 
@@ -419,6 +427,8 @@ def test_reuse_historical_proposal_copies_server_data_as_manual_then_can_be_vali
         "source": f"historical:{historical_name}",
         "confidence": None,
         "comment": None,
+        "geographic_reference": None,
+        "coordinates_overridden": False,
     }
     assert store.get(historical_name) == historical
     assert validated.status_code == 200
@@ -540,6 +550,8 @@ def test_upsert_place_enrichment_and_expose_it_in_inventory():
         "source": None,
         "confidence": None,
         "comment": "Saisie manuelle",
+        "geographic_reference": None,
+        "coordinates_overridden": False,
     }
     assert places.json()[0]["enrichment"] == response.json()
 
@@ -619,6 +631,19 @@ def test_geocoding_candidates_and_explicit_geoapify_selection():
             postcode="69004",
             region="Auvergne-Rhône-Alpes",
             country="France",
+            country_code="fr",
+            state_code="ARA",
+            county="Rhône",
+            county_code="69",
+            suburb="La Croix-Rousse",
+            district="4e arrondissement",
+            datasource_name="openstreetmap",
+            datasource_attribution="© OpenStreetMap contributors",
+            datasource_license="ODbL",
+            datasource_url="https://www.openstreetmap.org/copyright",
+            rank_confidence=0.99,
+            rank_match_type="full_match",
+            language="fr",
         ),
         GeocodingCandidate(
             provider="geoapify",
@@ -655,7 +680,17 @@ def test_geocoding_candidates_and_explicit_geoapify_selection():
     assert searched.status_code == 200
     assert len(searched.json()) == 2
     assert searched.json()[0]["city"] == "Lyon"
-    assert selected.json() == {
+    assert searched.json()[0]["country_code"] == "fr"
+    assert searched.json()[0]["district"] == "4e arrondissement"
+    assert searched.json()[0]["datasource_attribution"] == "© OpenStreetMap contributors"
+    selected_payload = selected.json()
+    assert {
+        key: selected_payload[key]
+        for key in (
+            "original_name", "normalized_name", "latitude", "longitude", "status",
+            "source", "confidence", "comment",
+        )
+    } == {
         "original_name": "Lyon 4 ?",
         "normalized_name": "Lyon 4e Arrondissement, France",
         "latitude": 45.78,
@@ -665,7 +700,99 @@ def test_geocoding_candidates_and_explicit_geoapify_selection():
         "confidence": None,
         "comment": None,
     }
+    reference = selected_payload["geographic_reference"]
+    assert reference["provider"] == "geoapify"
+    assert reference["provider_id"] == "first"
+    assert reference["formatted"] == "Lyon 4e Arrondissement, France"
+    assert reference["postcode"] == "69004"
+    assert reference["country_code"] == "fr"
+    assert reference["state_code"] == "ARA"
+    assert reference["county"] == "Rhône"
+    assert reference["district"] == "4e arrondissement"
+    assert reference["rank_confidence"] == 0.99
+    assert reference["language"] == "fr"
+    assert "insee_code" not in reference
+    assert selected_payload["coordinates_overridden"] is False
     assert places.json()[0]["enrichment"] == selected.json()
+
+
+def test_geographic_reference_survives_validation_and_manual_coordinate_override():
+    genealogy = make_genealogy()
+    source_name = "Ecully"
+    genealogy.persons["@I1@"].events.append(
+        Event(type="BIRT", place=Place(original_name=source_name))
+    )
+    reference = GeographicReference(
+        provider="geoapify",
+        provider_id="place-ecully",
+        formatted="Écully, France",
+        latitude=45.776,
+        longitude=4.778,
+        language="fr",
+        postcode="69130",
+        country="France",
+        country_code="fr",
+    )
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(
+        PlaceEnrichment(
+            original_name=source_name,
+            normalized_name="Écully, France",
+            latitude=45.776,
+            longitude=4.778,
+            status=PlaceEnrichmentStatus.MANUAL,
+            source="geoapify",
+            geographic_reference=reference,
+        )
+    )
+
+    with TestClient(create_app(genealogy, store)) as client:
+        validated = client.post(
+            "/place-enrichments/validate", json={"original_name": source_name}
+        )
+        comment_updated = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": source_name,
+                "normalized_name": "Écully, France",
+                "latitude": 45.776,
+                "longitude": 4.778,
+                "comment": "Commentaire uniquement",
+            },
+        )
+        normalized_name_updated = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": source_name,
+                "normalized_name": "Écully (Rhône), France",
+                "latitude": 45.776,
+                "longitude": 4.778,
+                "comment": "Commentaire uniquement",
+            },
+        )
+        overridden = client.put(
+            "/place-enrichments",
+            json={
+                "original_name": source_name,
+                "normalized_name": "Écully, France",
+                "latitude": 45.777,
+                "longitude": 4.779,
+                "comment": "Coordonnées ajustées manuellement",
+            },
+        )
+
+    assert validated.status_code == 200
+    assert validated.json()["geographic_reference"]["provider_id"] == "place-ecully"
+    assert validated.json()["coordinates_overridden"] is False
+    assert comment_updated.json()["status"] == "VALIDATED"
+    assert comment_updated.json()["geographic_reference"]["provider_id"] == "place-ecully"
+    assert normalized_name_updated.json()["status"] == "MANUAL"
+    assert normalized_name_updated.json()["geographic_reference"]["provider_id"] == "place-ecully"
+    assert overridden.status_code == 200
+    assert overridden.json()["status"] == "MANUAL"
+    assert overridden.json()["source"] is None
+    assert overridden.json()["geographic_reference"]["latitude"] == 45.776
+    assert overridden.json()["coordinates_overridden"] is True
 
 
 def test_geocoding_returns_no_candidates_for_unicode_query():

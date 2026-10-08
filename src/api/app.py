@@ -34,6 +34,7 @@ from src.api.schemas import (
     GeocodingCandidatesRequest,
     GeocodingCandidateSelectionRequest,
     HealthResponse,
+    GeographicReferenceResponse,
     HistoricalPlaceProposalResponse,
     HistoricalPlaceReconciliationResponse,
     HistoricalPlaceReuseRequest,
@@ -64,6 +65,7 @@ from src.api.schemas import (
 )
 from src.domain.models import (
     Genealogy,
+    GeographicReference,
     ImportReport,
     Person,
     PlaceEnrichment,
@@ -661,6 +663,7 @@ def create_app(
                 source="geoapify",
                 confidence=None,
                 comment=None,
+                geographic_reference=candidate.geographic_reference(),
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -739,6 +742,9 @@ def create_app(
                 source=source,
                 confidence=confidence,
                 comment=payload.comment,
+                geographic_reference=(
+                    existing.geographic_reference if existing is not None else None
+                ),
             )
         except ValueError as exc:
             raise HTTPException(
@@ -1166,6 +1172,15 @@ def _candidate_response(candidate: GeocodingCandidate, selection_token: str) -> 
         latitude=candidate.latitude, longitude=candidate.longitude,
         city=candidate.city, postcode=candidate.postcode, region=candidate.region,
         country=candidate.country, result_type=candidate.result_type,
+        country_code=candidate.country_code, state_code=candidate.state_code,
+        county=candidate.county, county_code=candidate.county_code,
+        suburb=candidate.suburb, district=candidate.district,
+        datasource_name=candidate.datasource_name,
+        datasource_attribution=candidate.datasource_attribution,
+        datasource_license=candidate.datasource_license,
+        datasource_url=candidate.datasource_url,
+        rank_confidence=candidate.rank_confidence,
+        rank_match_type=candidate.rank_match_type, language=candidate.language,
     )
 
 
@@ -1278,6 +1293,42 @@ def _enrichment_response(
         source=enrichment.source,
         confidence=enrichment.confidence,
         comment=enrichment.comment,
+        geographic_reference=_geographic_reference_response(
+            enrichment.geographic_reference
+        ),
+        coordinates_overridden=enrichment.coordinates_overridden,
+    )
+
+
+def _geographic_reference_response(
+    reference: GeographicReference | None,
+) -> GeographicReferenceResponse | None:
+    if reference is None:
+        return None
+    return GeographicReferenceResponse(
+        provider=reference.provider,
+        provider_id=reference.provider_id,
+        formatted=reference.formatted,
+        latitude=reference.latitude,
+        longitude=reference.longitude,
+        language=reference.language,
+        country=reference.country,
+        country_code=reference.country_code,
+        state=reference.state,
+        state_code=reference.state_code,
+        county=reference.county,
+        county_code=reference.county_code,
+        city=reference.city,
+        suburb=reference.suburb,
+        district=reference.district,
+        postcode=reference.postcode,
+        result_type=reference.result_type,
+        datasource_name=reference.datasource_name,
+        datasource_attribution=reference.datasource_attribution,
+        datasource_license=reference.datasource_license,
+        datasource_url=reference.datasource_url,
+        rank_confidence=reference.rank_confidence,
+        rank_match_type=reference.rank_match_type,
     )
 
 

@@ -65,6 +65,34 @@ class PlaceEnrichmentResponse(BaseModel):
     source: str | None
     confidence: float | None
     comment: str | None
+    geographic_reference: "GeographicReferenceResponse | None"
+    coordinates_overridden: bool
+
+
+class GeographicReferenceResponse(BaseModel):
+    provider: str
+    provider_id: str
+    formatted: str
+    latitude: float
+    longitude: float
+    language: str | None
+    country: str | None
+    country_code: str | None
+    state: str | None
+    state_code: str | None
+    county: str | None
+    county_code: str | None
+    city: str | None
+    suburb: str | None
+    district: str | None
+    postcode: str | None
+    result_type: str | None
+    datasource_name: str | None
+    datasource_attribution: str | None
+    datasource_license: str | None
+    datasource_url: str | None
+    rank_confidence: float | None
+    rank_match_type: str | None
 
 
 class PlaceEnrichmentUpdateRequest(BaseModel):
@@ -131,6 +159,19 @@ class GeocodingCandidateResponse(BaseModel):
     region: str | None
     country: str | None
     result_type: str | None
+    country_code: str | None
+    state_code: str | None
+    county: str | None
+    county_code: str | None
+    suburb: str | None
+    district: str | None
+    datasource_name: str | None
+    datasource_attribution: str | None
+    datasource_license: str | None
+    datasource_url: str | None
+    rank_confidence: float | None
+    rank_match_type: str | None
+    language: str | None
 
 
 class GeocodingCandidateSelectionRequest(BaseModel):

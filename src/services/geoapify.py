@@ -41,6 +41,7 @@ class GeoapifyGeocoder:
             {
                 "text": query,
                 "format": "json",
+                "lang": "fr",
                 "limit": limit,
                 "apiKey": self._api_key,
             }
@@ -110,7 +111,20 @@ def _candidate_from_result(
         postcode=_optional_string(result, "postcode"),
         region=_optional_string(result, "state"),
         country=_optional_string(result, "country"),
+        country_code=_optional_string(result, "country_code"),
+        state_code=_optional_string(result, "state_code"),
+        county=_optional_string(result, "county"),
+        county_code=_optional_string(result, "county_code"),
+        suburb=_optional_string(result, "suburb"),
+        district=_optional_string(result, "district"),
         result_type=_optional_string(result, "result_type"),
+        datasource_name=_optional_nested_string(result, "datasource", "sourcename"),
+        datasource_attribution=_optional_nested_string(result, "datasource", "attribution"),
+        datasource_license=_optional_nested_string(result, "datasource", "license"),
+        datasource_url=_optional_nested_string(result, "datasource", "url"),
+        rank_confidence=_optional_nested_number(result, "rank", "confidence"),
+        rank_match_type=_optional_nested_string(result, "rank", "match_type"),
+        language="fr",
     )
 
 
@@ -120,3 +134,22 @@ def _optional_string(
 ) -> str | None:
     value = result.get(field)
     return str(value) if value is not None else None
+
+
+def _optional_nested_string(
+    result: dict[str, object], container: str, field: str
+) -> str | None:
+    value = result.get(container)
+    return _optional_string(value, field) if isinstance(value, dict) else None
+
+
+def _optional_nested_number(
+    result: dict[str, object], container: str, field: str
+) -> float | None:
+    value = result.get(container)
+    if not isinstance(value, dict) or value.get(field) is None:
+        return None
+    try:
+        return float(value[field])
+    except (TypeError, ValueError):
+        return None

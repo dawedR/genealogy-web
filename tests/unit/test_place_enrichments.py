@@ -3,6 +3,7 @@ import json
 import pytest
 
 from src.domain.models import (
+    GeographicReference,
     PlaceEnrichment,
     PlaceEnrichmentStatus,
 )
@@ -116,3 +117,68 @@ def test_json_store_round_trips_validated_status(tmp_path):
     JsonPlaceEnrichmentStore(path).save(enrichment)
 
     assert JsonPlaceEnrichmentStore(path).get(enrichment.original_name) == enrichment
+
+
+def test_json_store_round_trips_optional_geographic_reference(tmp_path):
+    path = tmp_path / "place_enrichments.json"
+    reference = GeographicReference(
+        provider="geoapify",
+        provider_id="place-123",
+        formatted="Chanéac, Ardèche, France",
+        latitude=44.917,
+        longitude=4.286,
+        language="fr",
+        country="France",
+        country_code="fr",
+        state="Auvergne-Rhône-Alpes",
+        county="Ardèche",
+        city="Chanéac",
+        postcode="07310",
+        result_type="city",
+        datasource_name="openstreetmap",
+        datasource_attribution="© OpenStreetMap contributors",
+        datasource_license="ODbL",
+        datasource_url="https://www.openstreetmap.org/copyright",
+        rank_confidence=0.98,
+        rank_match_type="full_match",
+    )
+    enrichment = manual_enrichment(geographic_reference=reference)
+
+    JsonPlaceEnrichmentStore(path).save(enrichment)
+
+    assert JsonPlaceEnrichmentStore(path).get(enrichment.original_name) == enrichment
+    stored_reference = json.loads(path.read_text(encoding="utf-8"))["enrichments"][
+        enrichment.original_name
+    ]["geographic_reference"]
+    assert stored_reference["postcode"] == "07310"
+    assert "insee_code" not in stored_reference
+
+
+def test_json_store_reads_existing_version_one_document_without_geographic_reference(tmp_path):
+    path = tmp_path / "place_enrichments.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "enrichments": {
+                    "Écully, France": {
+                        "original_name": "Écully, France",
+                        "normalized_name": "Écully, France",
+                        "latitude": 45.776,
+                        "longitude": 4.778,
+                        "status": "VALIDATED",
+                        "source": "geoapify",
+                        "confidence": None,
+                        "comment": None,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    enrichment = JsonPlaceEnrichmentStore(path).get("Écully, France")
+
+    assert enrichment is not None
+    assert enrichment.geographic_reference is None
+    assert enrichment.coordinates_overridden is False

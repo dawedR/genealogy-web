@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from src.domain.models import GeographicReference
+
 
 @dataclass(frozen=True)
 class GeocodingCandidate:
@@ -16,6 +18,46 @@ class GeocodingCandidate:
     region: str | None = None
     country: str | None = None
     result_type: str | None = None
+    country_code: str | None = None
+    state_code: str | None = None
+    county: str | None = None
+    county_code: str | None = None
+    suburb: str | None = None
+    district: str | None = None
+    datasource_name: str | None = None
+    datasource_attribution: str | None = None
+    datasource_license: str | None = None
+    datasource_url: str | None = None
+    rank_confidence: float | None = None
+    rank_match_type: str | None = None
+    language: str | None = None
+
+    def geographic_reference(self) -> GeographicReference:
+        return GeographicReference(
+            provider=self.provider,
+            provider_id=self.provider_id,
+            formatted=self.display_name,
+            latitude=self.latitude,
+            longitude=self.longitude,
+            language=self.language,
+            country=self.country,
+            country_code=self.country_code,
+            state=self.region,
+            state_code=self.state_code,
+            county=self.county,
+            county_code=self.county_code,
+            city=self.city,
+            suburb=self.suburb,
+            district=self.district,
+            postcode=self.postcode,
+            result_type=self.result_type,
+            datasource_name=self.datasource_name,
+            datasource_attribution=self.datasource_attribution,
+            datasource_license=self.datasource_license,
+            datasource_url=self.datasource_url,
+            rank_confidence=self.rank_confidence,
+            rank_match_type=self.rank_match_type,
+        )
 
 
 class GeocodingUnavailableError(Exception):
