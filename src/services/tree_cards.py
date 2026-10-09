@@ -26,6 +26,15 @@ _MONTHS = {
     "DEC": "DEC",
 }
 
+_APPROXIMATE_DATE_MARKERS = {
+    "ABOUT": "~",
+    "ABT": "~",
+    "BEFORE": "<",
+    "BEF": "<",
+    "AFTER": ">",
+    "AFT": ">",
+}
+
 
 @dataclass(frozen=True)
 class TreePersonCard:
@@ -79,13 +88,13 @@ def build_tree_person_card(
         is_unknown=False,
         sex=person.sex,
         given_names=person.given_names or None,
-        display_given_name=_first_given_name(person.given_names),
+        display_given_name=person.given_names or None,
         surname=person.surname or None,
         display_surname=person.surname.upper() or None,
         birth_date=birth_date,
-        display_birth_date=format_legacy_date(birth_date),
+        display_birth_date=format_tree_date(birth_date),
         death_date=death_date,
-        display_death_date=format_legacy_date(death_date),
+        display_death_date=format_tree_date(death_date),
         portrait=portraits.resolve(
             person.id,
             person.sex,
@@ -95,17 +104,18 @@ def build_tree_person_card(
     )
 
 
-def format_legacy_date(value: str | None) -> str | None:
-    """Keep GEDCOM precision while applying the legacy month abbreviations."""
+def format_tree_date(value: str | None) -> str | None:
+    """Format a GEDCOM date for tree cards without changing its source value."""
     if value is None:
         return None
     display = re.sub(r"\b0(\d)\b", r"\1", value)
-    return re.sub(
+    display = re.sub(
         r"\b([A-Z]{3})\b",
         lambda match: _MONTHS.get(match.group(1), match.group(1)),
         display,
     )
-
-
-def _first_given_name(value: str) -> str | None:
-    return next(iter(value.split()), None)
+    return re.sub(
+        r"^(ABOUT|ABT|BEFORE|BEF|AFTER|AFT)(\s+)",
+        lambda match: _APPROXIMATE_DATE_MARKERS[match.group(1)] + match.group(2),
+        display,
+    )

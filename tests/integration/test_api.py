@@ -1,12 +1,14 @@
 from urllib import response
 import os
 import importlib
+from pathlib import Path
 
 import pytest
 
 from fastapi.testclient import TestClient
 
 from src.api.app import _public_app_path, create_app, normalize_app_root_path
+from src.gedcom.importer import import_gedcom
 from src.services.combined_tree import CombinedTreeOptions, build_combined_tree
 from src.services.portraits import PortraitResolver
 from src.services.tree_layout import layout_combined_tree
@@ -2263,6 +2265,11 @@ def test_tree_interface_exposes_reactive_controls_and_uses_server_layout():
     assert 'G0 · Noyau familial' in renderer.text
     assert 'tree.person_cards.map' in renderer.text
     assert 'card.portrait.url' in renderer.text
+    assert 'card.display_birth_date' in renderer.text
+    assert 'card.display_death_date' in renderer.text
+    assert 'text.textContent = line.value;' in renderer.text
+    assert 'text.setAttribute("textLength", availableWidth);' in renderer.text
+    assert 'text.setAttribute("lengthAdjust", "spacingAndGlyphs");' in renderer.text
     assert 'preserveAspectRatio", "xMidYMid slice' in renderer.text
     assert 'tree.layout.union_nodes' not in renderer.text
     assert 'tree-union' not in renderer.text
@@ -2457,6 +2464,32 @@ def test_tree_endpoint_exposes_person_cards_consumed_by_the_renderer():
         and {"url", "kind"} <= card["portrait"].keys()
         for card in data["person_cards"]
     )
+
+
+def test_tree_cards_preserve_imported_full_names_for_embedded_and_dedicated_views():
+    genealogy, _ = import_gedcom(
+        Path("tests/fixtures/gedcom-name-variants.ged"),
+    )
+
+    with TestClient(create_app(genealogy)) as client:
+        tree = client.get(
+            "/people/@I31@/tree",
+            params={"ancestor_generations": 0, "descendant_generations": 0},
+        )
+        embedded = client.get("/")
+        dedicated = client.get(
+            "/tree-view?person_id=%40I31%40&ancestor_generations=0&descendant_generations=0",
+        )
+
+    assert tree.status_code == 200
+    cards = {card["person_id"]: card for card in tree.json()["person_cards"]}
+    assert cards["@I31@"]["given_names"] == "Dwojra / Rachel"
+    assert cards["@I31@"]["display_given_name"] == "Dwojra / Rachel"
+    assert cards["@I31@"]["surname"] == "ZYLBERSZTAJN"
+    assert cards["@I31@"]["display_surname"] == "ZYLBERSZTAJN"
+    assert embedded.status_code == 200
+    assert dedicated.status_code == 200
+    assert './static/tree_renderer.js' in dedicated.text
 
 
 def test_tree_endpoint_serializes_simple_projection_and_person_details():

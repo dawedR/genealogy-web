@@ -183,15 +183,34 @@ def _name(record) -> tuple[str, str]:
     value = name_record.value
 
     if isinstance(value, tuple):
-        given_names = value[0] if len(value) > 0 else ""
-        surname = value[1] if len(value) > 1 else ""
-
-        return (
-            str(given_names or "").strip(),
-            str(surname or "").strip(),
-        )
+        return _name_from_components(value)
 
     return str(value).strip(), ""
+
+
+def _name_from_components(value: tuple[object, ...]) -> tuple[str, str]:
+    """Interpret ged4py NAME components without splitting a full name string.
+
+    The usual GEDCOM shape ``Given /Surname/`` is exposed as
+    ``(given, surname, suffix)``.  A non-canonical but encountered variant,
+    ``Given / Variant /Surname/``, is exposed as
+    ``(given, variant, 'Surname/')``.  The trailing delimiter is the evidence
+    that the third component is the surname; tuple length alone is not enough.
+    """
+    components = [str(part or "").strip() for part in value]
+    given_names = components[0] if components else ""
+    surname = components[1] if len(components) > 1 else ""
+
+    if len(components) > 2 and components[2].endswith("/"):
+        variant = components[1]
+        delimited_surname = components[2][:-1].strip()
+        if delimited_surname:
+            given_names = " / ".join(
+                component for component in (given_names, variant) if component
+            )
+            surname = delimited_surname
+
+    return given_names, surname
 
 
 def _parse_sex(value: str | None) -> Sex:

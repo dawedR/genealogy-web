@@ -72,29 +72,39 @@
                 text.setAttribute("y", firstLineY + index * 15);
                 text.setAttribute(
                     "class",
-                    index < 2
+                    line.kind === "name"
                         ? "tree-person-label tree-person-name"
                         : "tree-person-label tree-person-date",
                 );
                 text.setAttribute("text-anchor", "middle");
-                text.textContent = line;
+                text.textContent = line.value;
                 svgElement.appendChild(text);
+                if (line.kind === "name") fitNameText(text, node.width - 2 * portraitMargin);
             }
         }
     }
 
     function treePersonCardLines(card) {
         if (card === undefined || card.is_unknown) {
-            return ["?"];
+            return [{kind: "name", value: "?"}];
         }
 
         const lines = [
-            card.display_given_name,
-            card.display_surname,
-            card.display_birth_date,
-            card.display_death_date,
-        ].filter(value => value !== null && value.trim() !== "");
-        return lines.length > 0 ? lines : ["?"];
+            ["name", card.display_given_name],
+            ["name", card.display_surname],
+            ["date", card.display_birth_date],
+            ["date", card.display_death_date],
+        ].filter(([, value]) => value !== null && value.trim() !== "")
+            .map(([kind, value]) => ({kind, value}));
+        return lines.length > 0 ? lines : [{kind: "name", value: "?"}];
+    }
+
+    function fitNameText(text, availableWidth) {
+        const textWidth = text.getComputedTextLength();
+        if (textWidth > availableWidth) {
+            text.setAttribute("textLength", availableWidth);
+            text.setAttribute("lengthAdjust", "spacingAndGlyphs");
+        }
     }
 
 

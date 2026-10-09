@@ -5,6 +5,7 @@ from src.gedcom.importer import import_gedcom
 
 
 FIXTURE = Path("tests/fixtures/gedcom-edge-cases.ged")
+NAME_VARIANTS_FIXTURE = Path("tests/fixtures/gedcom-name-variants.ged")
 
 
 def test_import_edge_cases():
@@ -118,3 +119,20 @@ def test_import_edge_cases():
             record_id="@I4@",
         ),
     ]
+
+
+def test_import_preserves_multiple_given_names_and_delimited_variants():
+    genealogy, _ = import_gedcom(NAME_VARIANTS_FIXTURE)
+
+    assert genealogy.persons["@I1@"].given_names == "Alice"
+    assert genealogy.persons["@I1@"].surname == "DUPONT"
+    assert genealogy.persons["@I33@"].given_names == "Moszek Hersz"
+    assert genealogy.persons["@I33@"].surname == "ROZENBLUM"
+    assert genealogy.persons["@I31@"].given_names == "Dwojra / Rachel"
+    assert genealogy.persons["@I31@"].surname == "ZYLBERSZTAJN"
+    assert genealogy.persons["@I4@"].given_names == "Jean Claude"
+    assert genealogy.persons["@I4@"].surname == "LE GRAND"
+    assert genealogy.persons["@I5@"].given_names == ""
+    assert genealogy.persons["@I5@"].surname == "SANS_PRENOM"
+    assert genealogy.persons["@I6@"].given_names == ""
+    assert genealogy.persons["@I6@"].surname == ""
