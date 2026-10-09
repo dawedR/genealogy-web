@@ -107,6 +107,10 @@ def test_public_root_path_serves_pages_assets_api_and_fallback_portraits(
             client.get(f"{public_prefix}/people/%40I1%40/tree"),
             client.get(f"{public_prefix}/static/style.css"),
             client.get(f"{public_prefix}/static/app.js"),
+            client.get(f"{public_prefix}/static/places/place_workspace.js"),
+            client.get(f"{public_prefix}/static/places/historical_reconciliation.js"),
+            client.get(f"{public_prefix}/static/places/place_geography.js"),
+            client.get(f"{public_prefix}/static/places/place_administration.js"),
             client.get(f"{public_prefix}/static/tree_view.js"),
             client.get(f"{public_prefix}/static/fan_view.js"),
             client.get(f"{public_prefix}/static/portraits/fallback-male.png"),
@@ -162,6 +166,7 @@ def test_static_files_support_proxy_stripped_root_path_scope(monkeypatch):
             for path in (
                 "/static/style.css",
                 "/static/app.js",
+                "/static/places/place_workspace.js",
                 "/static/fan_renderer.js",
                 "/static/tree_renderer.js",
                 "/static/portraits/fallback-male.png",
@@ -1309,9 +1314,10 @@ def test_index_page():
     assert "Genealogy Web" in response.text
     assert 'id="gedcom-status"' in response.text
     assert '<details id="gedcom-details" class="secondary-panel">' in response.text
-    assert '<details id="places-details" class="secondary-panel">' in response.text
+    assert '<details id="places-workbench-details" class="secondary-panel">' in response.text
+    assert 'id="places-details"' not in response.text
     assert '<details id="gedcom-details" class="secondary-panel" open' not in response.text
-    assert '<details id="places-details" class="secondary-panel" open' not in response.text
+    assert '<details id="places-workbench-details" class="secondary-panel" open' not in response.text
     assert 'id="import-form"' in response.text
     assert 'id="search-form"' in response.text
     assert 'id="selected-person"' in response.text
@@ -1320,28 +1326,15 @@ def test_index_page():
     assert 'id="tree-show-siblings"' not in response.text
     assert "Afficher la fratrie" not in response.text
     for element_id in (
-        "places-status",
-        "places-table",
-        "places-list",
-        "place-enrichment-form",
-        "place-enrichment-original-name",
-        "place-enrichment-status",
-        "place-enrichment-normalized-name",
-        "place-enrichment-latitude",
-        "place-enrichment-longitude",
-        "place-enrichment-comment",
-        "place-enrichment-validate",
-        "place-geocoding-query",
-        "place-geocoding-search",
-        "place-geocoding-results",
-        "historical-reconciliation",
-        "historical-reconciliation-summary",
-        "historical-reconciliation-list",
-        "historical-reconciliation-show-all",
-        "administrative-references",
-        "administrative-references-summary",
-        "administrative-references-list",
-        "administrative-references-confirm-selected",
+        "places-workbench-details",
+        "places-workbench-status",
+        "places-workbench-search",
+        "places-workbench-filter",
+        "places-workbench-sort",
+        "places-workbench-list",
+        "places-workbench-detail",
+        "places-workbench-previous",
+        "places-workbench-next",
         "fan-opening",
         "fan-chart",
         "fan-legend",
@@ -1352,6 +1345,12 @@ def test_index_page():
         "fan-label-death",
     ):
         assert f'id="{element_id}"' in response.text
+    for removed_id in (
+        "places-status", "places-table", "places-list", "place-enrichment-form",
+        "place-geocoding-query", "historical-reconciliation",
+        "administrative-references",
+    ):
+        assert f'id="{removed_id}"' not in response.text
 def test_static_javascript():
     with make_client() as client:
         response = client.get("/static/app.js")
@@ -1359,36 +1358,33 @@ def test_static_javascript():
     assert response.status_code == 200
     assert "loadAncestry" not in response.text
     assert "loadGedcomStatus" in response.text
-    assert "loadPlaces" in response.text
-    assert "selectPlace" in response.text
-    assert "optionalCoordinate" in response.text
-    assert "formatPlaceEventCounts" in response.text
-    assert "renderGeocodingCandidates" in response.text
-    assert "selectGeocodingCandidate" in response.text
-    assert "loadHistoricalReconciliation" in response.text
-    assert "renderHistoricalReconciliation" in response.text
-    assert "reuseHistoricalProposal" in response.text
-    assert "place-reconciliation/historical/reuse" in response.text
-    assert "loadAdministrativeReferences" in response.text
-    assert "confirmAdministrativeMatches" in response.text
-    assert "places/administrative-references/confirm-match" in response.text
-    assert "places/administrative-references/submit-review" in response.text
-    assert "places/administrative-references/manual-selection" in response.text
-    assert "cog/search" in response.text
-    assert "formatCogCandidate" in response.text
-    assert "formatAdministrativeReference" in response.text
-    assert "formatCogLocation" in response.text
-    assert "candidate.cog_type" not in response.text
-    assert "type: candidate.type" in response.text
-    assert "selectAdministrativeCog(original_name, candidate, container)" in response.text
-    assert "resultsContainer.hidden = true;" in response.text
-    assert "placeStatusLabel" in response.text
-    assert "place-enrichments/validate" in response.text
+    assert "refreshPlacesWorkspace" in response.text
+    assert 'import("./places/place_workspace.js")' in response.text
+    for removed_symbol in (
+        "loadPlaces", "selectPlace", "loadHistoricalReconciliation",
+        "loadAdministrativeReferences", "renderGeocodingCandidates",
+        "selectAdministrativeCog", "placeStatusLabel",
+    ):
+        assert removed_symbol not in response.text
     assert "loadFanChart(person.id);" in response.text
     assert "loadTreeChart(person.id);" in response.text
     assert "getFanLabelConfig" in response.text
     assert "renderFanLegend" in response.text
     assert "clearFanLegend(fanLegend, fanLegendList)" in response.text
+    workspace = client.get("/static/places/place_workspace.js")
+    api = client.get("/static/places/place_api.js")
+    detail = client.get("/static/places/place_detail.js")
+    assert workspace.status_code == 200
+    assert api.status_code == 200
+    assert detail.status_code == 200
+    assert "loadPlaceWorkbench" in workspace.text
+    assert "visibleEntries" in workspace.text
+    assert 'appUrl("/places/workbench")' in api.text
+    workbench_loader = api.text[:api.text.index("export async function reuseHistoricalProposal")]
+    assert "method:" not in workbench_loader
+    assert "Géographie" in detail.text
+    assert "Administration" in detail.text
+    assert "Présentation" in detail.text
     renderer = client.get("/static/fan_renderer.js")
     assert renderer.status_code == 200
     for marker in (
@@ -1400,25 +1396,133 @@ def test_static_javascript():
         assert marker in renderer.text
 
 
-def test_historical_reconciliation_frontend_moves_to_the_next_session_proposal():
+def test_historical_reconciliation_frontend_keeps_session_proposals_in_its_module():
     with make_client() as client:
-        response = client.get("/static/app.js")
+        response = client.get("/static/places/historical_reconciliation.js")
 
     assert response.status_code == 200
     script = response.text
-    skip_start = script.index('skip.addEventListener("click", () => {')
-    skip_end = script.index("actions.append(reuse, skip);", skip_start)
-    skip_handler = script[skip_start:skip_end]
-    assert "skippedHistoricalProposals.add(historicalProposalKey(proposal));" in skip_handler
-    assert "renderHistoricalReconciliation();" in skip_handler
+    assert "historicalProposalKey" in script
+    assert "onSkip(proposal)" in script
+    assert "onRestore(proposal)" in script
+    assert "onReuse(proposal)" in script
 
-    reuse_start = script.index("async function reuseHistoricalProposal")
-    reuse_end = script.index("function historicalProposalKey", reuse_start)
-    reuse_handler = script[reuse_start:reuse_end]
-    assert "source_original_name: proposal.source_original_name" in reuse_handler
-    assert "historical_original_name: proposal.historical_original_name" in reuse_handler
-    assert "await loadPlaces();" in reuse_handler
-    assert "await loadHistoricalReconciliation();" in reuse_handler
+
+def test_places_workbench_historical_reconciliation_keeps_server_authority_and_session_state():
+    with make_client() as client:
+        workspace = client.get("/static/places/place_workspace.js")
+        detail = client.get("/static/places/place_detail.js")
+        api = client.get("/static/places/place_api.js")
+        reconciliation = client.get(
+            "/static/places/historical_reconciliation.js",
+        )
+
+    assert all(response.status_code == 200 for response in (
+        workspace, detail, api, reconciliation,
+    ))
+    assert 'import {renderHistoricalProposals}' in detail.text
+    assert "historicalActions()" in workspace.text
+    assert "skippedHistoricalProposals: new Set()" in workspace.text
+    assert "onSkip: proposal =>" in workspace.text
+    assert "onRestore: proposal =>" in workspace.text
+    assert "showSkippedHistoricalProposals" in workspace.text
+    assert "ensureVisibleSelection(entries);" in workspace.text
+    assert "entries.find(" in workspace.text
+    assert "state.entries.find(" not in workspace.text
+    assert "if (entries.length === 1)" in workspace.text
+    assert "if (serial !== state.requestSerial) return;" in workspace.text
+    assert workspace.text.count('elements.search.addEventListener("input"') == 1
+    assert workspace.text.count('elements.filter.addEventListener("change"') == 1
+    assert 'appUrl("/place-reconciliation/historical/reuse")' in api.text
+    reuse_body = api.text[api.text.index("body: JSON.stringify({"):]
+    assert "source_original_name: proposal.source_original_name" in reuse_body
+    assert "historical_original_name: proposal.historical_original_name" in reuse_body
+    assert "latitude:" not in reuse_body[:reuse_body.index("const enrichment")]
+    assert "historicalReasonLabel" in reconciliation.text
+    assert "historicalWarningLabel" in reconciliation.text
+    assert "Revoir les propositions passées" in reconciliation.text
+    assert "Réutiliser" in reconciliation.text
+    assert "Passer" in reconciliation.text
+
+
+def test_places_workbench_geography_uses_existing_secure_api_workflows():
+    with make_client() as client:
+        workspace = client.get("/static/places/place_workspace.js")
+        api = client.get("/static/places/place_api.js")
+        detail = client.get("/static/places/place_detail.js")
+        geography = client.get("/static/places/place_geography.js")
+
+    assert all(response.status_code == 200 for response in (
+        workspace, api, detail, geography,
+    ))
+    assert 'import {renderGeographyEditor}' in detail.text
+    assert "createGeographyUiState" in workspace.text
+    assert "searchGeocodingCandidates" in workspace.text
+    assert "selectGeoapifyCandidate" in workspace.text
+    assert "savePlaceEnrichment" in workspace.text
+    assert "validatePlaceEnrichment" in workspace.text
+    assert "state.selectedOriginalName !== originalName" in workspace.text
+    assert "state.geography.candidates = null;" in workspace.text
+    assert 'appUrl("/geocoding/candidates")' in api.text
+    assert 'appUrl("/place-enrichments/geoapify-selection")' in api.text
+    assert 'appUrl("/place-enrichments")' in api.text
+    assert 'appUrl("/place-enrichments/validate")' in api.text
+    selection = api.text[api.text.index("export async function selectGeoapifyCandidate"):]
+    selection = selection[:selection.index("export async function savePlaceEnrichment")]
+    assert "candidate_token: candidateToken" in selection
+    assert "latitude:" not in selection
+    assert "longitude:" not in selection
+    assert "Rechercher avec Geoapify" in geography.text
+    assert "Modifier l’enrichissement géographique" in geography.text
+    assert "Choisir ce candidat" in geography.text
+    assert "Enregistrer" in geography.text
+    assert "Valider ce lieu" in geography.text
+    assert "Les coordonnées actives ont été modifiées manuellement." in geography.text
+    assert "Aucun candidat trouvé." in geography.text
+    assert geography.text.count('form.addEventListener("submit"') == 1
+
+
+def test_places_workbench_administration_uses_only_server_verified_cog_identity():
+    with make_client() as client:
+        workspace = client.get("/static/places/place_workspace.js")
+        api = client.get("/static/places/place_api.js")
+        detail = client.get("/static/places/place_detail.js")
+        administration = client.get("/static/places/place_administration.js")
+        formatters = client.get("/static/places/place_formatters.js")
+
+    assert all(response.status_code == 200 for response in (
+        workspace, api, detail, administration, formatters,
+    ))
+    assert 'import {renderAdministrationEditor}' in detail.text
+    assert "createAdministrationUiState" in workspace.text
+    assert "administrativeSearch" in workspace.text
+    assert "administrativeWrite" in workspace.text
+    assert "state.administration.candidates = null;" in workspace.text
+    assert "state.selectedOriginalName !== originalName" in workspace.text
+    assert 'appUrl("/places/administrative-references/confirm-match")' in api.text
+    assert 'appUrl("/places/administrative-references/submit-review")' in api.text
+    assert 'appUrl("/places/administrative-references/manual-selection")' in api.text
+    assert 'appUrl("/places/administrative-references")' in api.text
+    assert 'appUrl(`/cog/search?query=${encodeURIComponent(query)}`)' in api.text
+    selection = api.text[api.text.index("export async function selectAdministrativeReference"):]
+    selection = selection[:selection.index("export async function deleteAdministrativeReference")]
+    assert "original_name: originalName" in selection
+    assert "cog_code: candidate.code" in selection
+    assert "cog_type: candidate.type" in selection
+    assert "human_note: humanNote" in selection
+    assert "latitude:" not in selection
+    assert "longitude:" not in selection
+    assert "if (!entry.administration.applicable) return null;" in administration.text
+    assert "Confirmer cette proposition COG" in administration.text
+    assert "Conserver pour revue" in administration.text
+    assert "Rechercher dans le COG" in administration.text
+    assert "Choisir cette référence" in administration.text
+    assert "Retirer le rattachement" in administration.text
+    assert "Cette référence ne correspond plus au référentiel COG actif." in administration.text
+    assert "Le code ${diagnostic.source_code} correspond à" in administration.text
+    assert "Sélection manuelle nécessaire." in administration.text
+    assert "code INSEE" in formatters.text
+    assert administration.text.count('input.addEventListener("input"') == 2
 
 
 def test_static_portrait_fallback_assets_are_served():
@@ -2955,4 +3059,73 @@ def test_place_presentations_endpoint_uses_only_confirmed_current_administrative
     assert presentations[paris]["full_label"] == paris
     assert presentations[paris]["generated_from"] == "GEDCOM_FALLBACK"
     assert presentations[polish]["short_label"] == "Odrzywół"
+    assert references.get_all() == before_references
+
+
+def test_places_workbench_composes_one_read_only_view_without_applying_orphans():
+    chaneac = "Chanéac, 07054, Ardèche, Auvergne-Rhône-Alpes, France"
+    dolna_wies = "Dolna Wieś (Bodzentyn), powiat de Kielce, gouvernement de Kielce, Pologne"
+    lyon = "Lyon, 69003, Rhône, Auvergne-Rhône-Alpes, France"
+    genealogy = Genealogy(persons={
+        "@I1@": Person(id="@I1@", events=[
+            Event(type="BIRT", place=Place(original_name=chaneac)),
+            Event(type="DEAT", place=Place(original_name=chaneac)),
+            Event(type="BIRT", place=Place(original_name=dolna_wies)),
+            Event(type="BIRT", place=Place(original_name=lyon)),
+        ])
+    })
+    enrichments = InMemoryPlaceEnrichmentStore()
+    enrichments.save(PlaceEnrichment(
+        original_name=lyon, latitude=45.75, longitude=4.87,
+        status=PlaceEnrichmentStatus.MANUAL,
+    ))
+    historical_name = "Dolna Wieś, Bodzentyn (Kielce), Pologne"
+    enrichments.save(PlaceEnrichment(
+        original_name=historical_name, latitude=50.97, longitude=21.04,
+        status=PlaceEnrichmentStatus.VALIDATED,
+    ))
+    candidate = CogResolver.bundled().lookup("07054", "COM")
+    assert candidate is not None
+    references = InMemoryAdministrativeReferenceStore()
+    references.save(AdministrativeReference(
+        original_name=chaneac, source="insee_cog", vintage="2026",
+        cog_code=candidate.code, cog_type=candidate.type, commune=candidate.commune,
+        department_code=candidate.department_code, department=candidate.department,
+        region_code=candidate.region_code, region=candidate.region,
+        historical_name=None, valid_from=None, valid_to=None,
+        match_method="CURRENT_CODE_AND_NAME", status=AdministrativeReferenceStatus.CONFIRMED,
+    ))
+    before_enrichments = enrichments.get_all()
+    before_references = references.get_all()
+
+    with TestClient(create_app(
+        genealogy,
+        place_enrichment_store=enrichments,
+        administrative_reference_store=references,
+    )) as client:
+        response = client.get("/places/workbench")
+
+    assert response.status_code == 200
+    entries = {entry["original_name"]: entry for entry in response.json()}
+    assert entries[chaneac]["occurrences_count"] == 2
+    assert entries[chaneac]["geography"] == {
+        "state": "UNENRICHED",
+        "enrichment_status": None,
+        "enrichment": None,
+    }
+    assert entries[chaneac]["administration"]["applicable"] is True
+    assert entries[chaneac]["administration"]["reference"]["status"] == "CONFIRMED"
+    assert entries[chaneac]["presentation"]["generated_from"] == "ADMINISTRATIVE_REFERENCE"
+    assert entries[lyon]["geography"]["state"] == "MANUAL"
+    assert entries[lyon]["geography"]["enrichment_status"] == "MANUAL"
+    assert entries[dolna_wies]["administration"] == {
+        "applicable": False,
+        "diagnostic_classification": "NOT_APPLICABLE",
+        "diagnostic": None,
+        "reference": None,
+        "reference_is_current": None,
+    }
+    reconciliation = entries[dolna_wies]["historical_reconciliation"]
+    assert reconciliation["proposals"][0]["historical_original_name"] == historical_name
+    assert enrichments.get_all() == before_enrichments
     assert references.get_all() == before_references

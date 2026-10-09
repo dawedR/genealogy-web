@@ -232,6 +232,35 @@ class HistoricalPlaceReuseRequest(BaseModel):
     historical_original_name: str
 
 
+class PlaceWorkbenchGeographyResponse(BaseModel):
+    """Geographic enrichment state; distinct from COG classifications."""
+
+    state: str
+    enrichment_status: str | None
+    enrichment: PlaceEnrichmentResponse | None
+
+
+class PlaceWorkbenchAdministrationResponse(BaseModel):
+    """COG state, explicitly absent for places outside France."""
+
+    applicable: bool
+    diagnostic_classification: str
+    diagnostic: CogDiagnosticResponse | None
+    reference: AdministrativeReferenceResponse | None
+    reference_is_current: bool | None
+
+
+class PlaceWorkbenchEntryResponse(BaseModel):
+    original_name: str
+    occurrences_count: int
+    persons_count: int
+    event_counts: dict[str, int]
+    geography: PlaceWorkbenchGeographyResponse
+    historical_reconciliation: HistoricalPlaceReconciliationResponse | None
+    administration: PlaceWorkbenchAdministrationResponse
+    presentation: PlacePresentationResponse
+
+
 class GeocodingCandidatesRequest(BaseModel):
     original_name: str
     query: str | None = None

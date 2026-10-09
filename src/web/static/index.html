@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Genealogy Web</title>
+    <title>Exploration</title>
     <link rel="stylesheet" href="./static/style.css">
 </head>
 
@@ -64,142 +64,49 @@
         </div>
     </details>
 
-    <details id="places-details" class="secondary-panel">
-        <summary>Lieux et enrichissements</summary>
-        <div class="secondary-panel-content">
-
-        <p id="places-status" class="status">
-            Importez un GEDCOM pour afficher les lieux.
-        </p>
-
-        <div class="places-table-container">
-            <table id="places-table" hidden>
-                <thead>
-                    <tr>
-                        <th scope="col">Lieu</th>
-                        <th scope="col">Occurrences</th>
-                        <th scope="col">Personnes</th>
-                        <th scope="col">Événements</th>
-                        <th scope="col">Statut</th>
-                    </tr>
-                </thead>
-                <tbody id="places-list"></tbody>
-            </table>
-        </div>
-
-        <section id="historical-reconciliation" hidden>
-            <div class="historical-reconciliation-heading">
-                <div>
-                    <h3>Réconciliation historique</h3>
-                    <p id="historical-reconciliation-summary" class="status"></p>
-                </div>
-                <button
-                    id="historical-reconciliation-show-all"
-                    type="button"
-                    hidden
-                >
-                    Afficher toutes les propositions
-                </button>
-            </div>
-            <div id="historical-reconciliation-list"></div>
-        </section>
-
-        <section id="administrative-references" hidden>
-            <div class="administrative-references-heading">
-                <div>
-                    <h3>Rattachement administratif COG</h3>
-                    <p id="administrative-references-summary" class="status"></p>
-                </div>
-                <button id="administrative-references-confirm-selected" type="button" hidden>
-                    Confirmer les références revues
-                </button>
-            </div>
-            <div id="administrative-references-list"></div>
-        </section>
-
-        <form id="place-enrichment-form" hidden>
-            <h3>Enrichir un lieu</h3>
-
-            <label>
-                Libellé GEDCOM original
-                <input
-                    id="place-enrichment-original-name"
-                    type="text"
-                    readonly
-                >
-            </label>
-
-            <p>
-                Statut : <span id="place-enrichment-status">—</span>
+    <details id="places-workbench-details" class="secondary-panel">
+        <summary>Gestion des lieux</summary>
+        <div class="secondary-panel-content places-workbench" aria-live="polite">
+            <p id="places-workbench-status" class="status">
+                Chargement des lieux…
             </p>
-
-            <button
-                id="place-enrichment-validate"
-                type="button"
-                hidden
-            >
-                Valider ce lieu
-            </button>
-
-            <label>
-                Requête Geoapify
-                <input
-                    id="place-geocoding-query"
-                    type="text"
-                >
-            </label>
-
-            <button
-                id="place-geocoding-search"
-                type="button"
-            >
-                Rechercher des candidats
-            </button>
-
-            <div id="place-geocoding-results" hidden></div>
-            <p id="place-geocoding-attribution" hidden>
-                Résultats fournis par
-                <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer">Geoapify</a>
-                et © les contributeurs OpenStreetMap.
-            </p>
-
-            <label>
-                Libellé normalisé
-                <input
-                    id="place-enrichment-normalized-name"
-                    type="text"
-                >
-            </label>
-
-            <label>
-                Latitude
-                <input
-                    id="place-enrichment-latitude"
-                    type="number"
-                    min="-90"
-                    max="90"
-                    step="any"
-                >
-            </label>
-
-            <label>
-                Longitude
-                <input
-                    id="place-enrichment-longitude"
-                    type="number"
-                    min="-180"
-                    max="180"
-                    step="any"
-                >
-            </label>
-
-            <label>
-                Commentaire
-                <textarea id="place-enrichment-comment"></textarea>
-            </label>
-
-            <button type="submit">Enregistrer l’enrichissement</button>
-        </form>
+            <div class="places-workbench-controls">
+                <label>
+                    Rechercher
+                    <input id="places-workbench-search" type="search" autocomplete="off">
+                </label>
+                <label>
+                    Filtre
+                    <select id="places-workbench-filter">
+                        <option value="ALL">Tous</option>
+                        <option value="TO_PROCESS">À traiter</option>
+                        <option value="TO_VERIFY">À vérifier</option>
+                        <option value="COMPLETED">Terminés</option>
+                        <option value="GEOGRAPHY_MISSING">Géographie manquante</option>
+                        <option value="COG_TO_CONFIRM">COG à confirmer</option>
+                    </select>
+                </label>
+                <label>
+                    Trier par
+                    <select id="places-workbench-sort">
+                        <option value="PRIORITY">Priorité de traitement</option>
+                        <option value="OCCURRENCES">Occurrences</option>
+                        <option value="ALPHABETICAL">Ordre alphabétique</option>
+                    </select>
+                </label>
+            </div>
+            <div class="places-workbench-layout">
+                <section class="places-workbench-list-panel" aria-label="Liste des lieux">
+                    <ol id="places-workbench-list" class="places-workbench-list"></ol>
+                    <div class="places-workbench-navigation">
+                        <button id="places-workbench-previous" type="button">Précédent</button>
+                        <button id="places-workbench-next" type="button">Suivant</button>
+                    </div>
+                </section>
+                <article id="places-workbench-detail" class="places-workbench-detail">
+                    Sélectionnez un lieu.
+                </article>
+            </div>
         </div>
     </details>
 

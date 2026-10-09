@@ -57,6 +57,9 @@ from src.api.schemas import (
     PlaceInventoryResponse,
     PlacePresentationComponentResponse,
     PlacePresentationResponse,
+    PlaceWorkbenchAdministrationResponse,
+    PlaceWorkbenchEntryResponse,
+    PlaceWorkbenchGeographyResponse,
     SosaOccurrenceResponse,
     TreeDiagnosticResponse,
     TreeCentralFamilyCoreResponse,
@@ -557,6 +560,65 @@ def create_app(
         ]
 
     @app.get(
+        "/places/workbench",
+        response_model=list[PlaceWorkbenchEntryResponse],
+    )
+    def places_workbench(request: Request) -> list[PlaceWorkbenchEntryResponse]:
+        """Read-only place workspace from one logical snapshot of local data."""
+
+        entries = inventory_places(_genealogy(request))
+        enrichments = _place_enrichment_store(request).get_all()
+        references = _administrative_reference_store(request).get_all()
+        reconciliations = {
+            item.source_original_name: item
+            for item in reconcile_historical_places(entries, enrichments)
+        }
+        resolver = _cog_resolver(request)
+        presentation_service = PlacePresentationService(resolver)
+
+        result: list[PlaceWorkbenchEntryResponse] = []
+        for entry in entries:
+            original_name = entry.original_name
+            enrichment = enrichments.get(original_name)
+            reference = references.get(original_name)
+            is_french = _is_french_place(original_name)
+            diagnostic = resolver.resolve(original_name) if is_french else None
+            administration = PlaceWorkbenchAdministrationResponse(
+                applicable=is_french,
+                diagnostic_classification=(
+                    diagnostic.classification.value if diagnostic else "NOT_APPLICABLE"
+                ),
+                diagnostic=(
+                    _cog_diagnostic_response(diagnostic)
+                    if diagnostic is not None else None
+                ),
+                reference=_administrative_reference_response(reference) if is_french else None,
+                reference_is_current=(
+                    _administrative_reference_is_current(reference, resolver)
+                    if is_french else None
+                ),
+            )
+            result.append(PlaceWorkbenchEntryResponse(
+                original_name=original_name,
+                occurrences_count=entry.occurrences_count,
+                persons_count=entry.persons_count,
+                event_counts=entry.event_counts,
+                geography=PlaceWorkbenchGeographyResponse(
+                    state=(enrichment.status.value if enrichment else "UNENRICHED"),
+                    enrichment_status=(enrichment.status.value if enrichment else None),
+                    enrichment=_enrichment_response(enrichment),
+                ),
+                historical_reconciliation=_historical_reconciliation_response(
+                    reconciliations.get(original_name)
+                ),
+                administration=administration,
+                presentation=_place_presentation_response(
+                    presentation_service.present(original_name, enrichment, reference)
+                ),
+            ))
+        return result
+
+    @app.get(
         "/places/cog-diagnostics",
         response_model=list[CogDiagnosticResponse],
     )
@@ -693,28 +755,7 @@ def create_app(
             _place_enrichment_store(request).get_all(),
         )
         return [
-            HistoricalPlaceReconciliationResponse(
-                source_original_name=reconciliation.source_original_name,
-                classification=reconciliation.classification.value,
-                proposals=[
-                    HistoricalPlaceProposalResponse(
-                        source_original_name=proposal.source_original_name,
-                        historical_original_name=proposal.historical_original_name,
-                        historical_status=proposal.historical_status.value,
-                        historical_normalized_name=proposal.historical_normalized_name,
-                        latitude=proposal.latitude,
-                        longitude=proposal.longitude,
-                        score=proposal.score,
-                        classification=proposal.classification.value,
-                        coordinate_reuse_reliability=(
-                            proposal.coordinate_reuse_reliability.value
-                        ),
-                        reasons=[reason.value for reason in proposal.reasons],
-                        warnings=[warning.value for warning in proposal.warnings],
-                    )
-                    for proposal in reconciliation.proposals
-                ],
-            )
+            _historical_reconciliation_response(reconciliation)
             for reconciliation in reconciliations
         ]
 
@@ -1517,6 +1558,33 @@ def _place_presentation_response(
         ],
         warnings=[warning.value for warning in presentation.warnings],
         generated_from=presentation.generated_from.value,
+    )
+
+
+def _historical_reconciliation_response(reconciliation):
+    if reconciliation is None:
+        return None
+    return HistoricalPlaceReconciliationResponse(
+        source_original_name=reconciliation.source_original_name,
+        classification=reconciliation.classification.value,
+        proposals=[
+            HistoricalPlaceProposalResponse(
+                source_original_name=proposal.source_original_name,
+                historical_original_name=proposal.historical_original_name,
+                historical_status=proposal.historical_status.value,
+                historical_normalized_name=proposal.historical_normalized_name,
+                latitude=proposal.latitude,
+                longitude=proposal.longitude,
+                score=proposal.score,
+                classification=proposal.classification.value,
+                coordinate_reuse_reliability=(
+                    proposal.coordinate_reuse_reliability.value
+                ),
+                reasons=[reason.value for reason in proposal.reasons],
+                warnings=[warning.value for warning in proposal.warnings],
+            )
+            for proposal in reconciliation.proposals
+        ],
     )
 
 
