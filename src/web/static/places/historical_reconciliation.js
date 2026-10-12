@@ -3,7 +3,7 @@ import {
     historicalReasonLabel,
     historicalReliabilityLabel,
     historicalWarningLabel,
-} from "./place_formatters.js";
+} from "./place_formatters.js?v=20261012";
 
 export function historicalProposalKey(proposal) {
     return `${proposal.source_original_name}\u0000${proposal.historical_original_name}`;

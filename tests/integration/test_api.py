@@ -123,6 +123,7 @@ def test_public_root_path_serves_pages_assets_api_and_fallback_portraits(
     assert tree_view.status_code == 200
     assert fan_view.status_code == 200
     assert all(response.status_code == 200 for response in responses)
+    assert all(response.headers["cache-control"] == "no-cache" for response in responses[4:13])
     assert 'href="./static/style.css"' in index.text
     assert 'src="./app-config.js"' in index.text
     assert 'src="./app-config.js"' in tree_view.text
@@ -178,12 +179,27 @@ def test_static_files_support_proxy_stripped_root_path_scope(monkeypatch):
     assert health.status_code == 200
     assert configuration.status_code == 200
     assert all(response.status_code == 200 for response in assets.values())
+    assert all(response.headers["cache-control"] == "no-cache" for response in assets.values())
     assert received_scopes[0] == {
         "path": "/static/style.css",
         "root_path": "/genealogy/static",
         "app_root_path": "/genealogy",
         "raw_path": b"/static/style.css",
     }
+
+
+def test_static_assets_revalidate_even_when_the_url_is_unchanged():
+    with TestClient(create_app(make_genealogy())) as client:
+        initial = client.get("/static/places/place_detail.js")
+        revalidated = client.get(
+            "/static/places/place_detail.js",
+            headers={"If-None-Match": initial.headers["etag"]},
+        )
+
+    assert initial.status_code == 200
+    assert initial.headers["cache-control"] == "no-cache"
+    assert revalidated.status_code == 304
+    assert revalidated.headers["cache-control"] == "no-cache"
 
 
 @pytest.mark.parametrize(
@@ -1361,7 +1377,7 @@ def test_static_javascript():
     assert "loadAncestry" not in response.text
     assert "loadGedcomStatus" in response.text
     assert "refreshPlacesWorkspace" in response.text
-    assert 'import("./places/place_workspace.js")' in response.text
+    assert 'import("./places/place_workspace.js?v=20261012")' in response.text
     for removed_symbol in (
         "loadPlaces", "selectPlace", "loadHistoricalReconciliation",
         "loadAdministrativeReferences", "renderGeocodingCandidates",
@@ -1384,9 +1400,10 @@ def test_static_javascript():
     assert 'appUrl("/places/workbench")' in api.text
     workbench_loader = api.text[:api.text.index("export async function reuseHistoricalProposal")]
     assert "method:" not in workbench_loader
-    assert "Géographie" in detail.text
-    assert "Administration" in detail.text
-    assert "Présentation" in detail.text
+    assert "Lieu d’origine" in detail.text
+    assert "Localisation" in detail.text
+    assert "Nom affiché dans la généalogie" in detail.text
+    assert "Détails et outils avancés" in detail.text
     renderer = client.get("/static/fan_renderer.js")
     assert renderer.status_code == 200
     for marker in (
@@ -1481,7 +1498,35 @@ def test_places_workbench_geography_uses_existing_secure_api_workflows():
     assert "Valider ce lieu" in geography.text
     assert "Les coordonnées actives ont été modifiées manuellement." in geography.text
     assert "Aucun candidat trouvé." in geography.text
+    assert "Number(value).toFixed(6)" in geography.text
     assert geography.text.count('form.addEventListener("submit"') == 1
+
+
+def test_places_workbench_simplifies_the_detail_without_changing_workflows():
+    with make_client() as client:
+        workspace = client.get("/static/places/place_workspace.js")
+        detail = client.get("/static/places/place_detail.js")
+        formatters = client.get("/static/places/place_formatters.js")
+        listing = client.get("/static/places/place_list.js")
+
+    assert all(response.status_code == 200 for response in (
+        workspace, detail, formatters, listing,
+    ))
+    assert "Lieu traité — localisation validée" in formatters.text
+    assert "NO_STRUCTURED_GEOGRAPHIC_REFERENCE" in formatters.text
+    assert "Saisie locale" in formatters.text
+    assert "Number(latitude).toFixed(6)" in formatters.text
+    assert "Détails et outils avancés" in detail.text
+    assert "entry.administration.applicable && administrationActions" in detail.text
+    assert "renderHistoricalProposals" in detail.text
+    assert "renderGeographyEditor" in detail.text
+    assert "renderAdministrationEditor" in detail.text
+    assert "state.detail.advancedOpen = true;" in workspace.text
+    assert 'target === "historical"' not in workspace.text
+    assert 'target === "geography-search"' in workspace.text
+    assert 'target === "geography-edit"' in workspace.text
+    assert 'target === "administration"' in workspace.text
+    assert "placeProgress(entry).treated" in listing.text
 
 
 def test_places_workbench_administration_uses_only_server_verified_cog_identity():

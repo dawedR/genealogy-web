@@ -379,7 +379,7 @@ async function initializePage() {
 
 async function refreshPlacesWorkspace() {
     if (placesWorkspaceInitialization === null) {
-        placesWorkspaceInitialization = import("./places/place_workspace.js")
+        placesWorkspaceInitialization = import("./places/place_workspace.js?v=20261012")
             .then(({createPlacesWorkspace}) => {
                 placesWorkspace = createPlacesWorkspace({appUrl});
                 return placesWorkspace;

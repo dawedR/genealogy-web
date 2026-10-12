@@ -1,7 +1,7 @@
 export function createGeographyUiState() {
     return {
         originalName: null, query: "", candidates: null, message: null,
-        searchOpen: false,
+        searchOpen: false, editOpen: false,
     };
 }
 
@@ -12,6 +12,7 @@ export function renderGeographyEditor({entry, state, onSearch, onSelect, onSave,
         state.candidates = null;
         state.message = null;
         state.searchOpen = false;
+        state.editOpen = false;
     }
     const container = document.createElement("div");
     container.className = "places-workbench-geography-editor";
@@ -24,7 +25,7 @@ export function renderGeographyEditor({entry, state, onSearch, onSelect, onSave,
     }
     container.append(
         searchSection(entry, state, onSearch, onSelect),
-        editSection(entry, enrichment, onSave, onValidate),
+        editSection(entry, enrichment, state, onSave, onValidate),
     );
     return container;
 }
@@ -70,7 +71,8 @@ function candidateResults(candidates, onSelect) {
         const title = document.createElement("strong");
         title.textContent = candidate.display_name;
         const coordinates = document.createElement("p");
-        coordinates.textContent = `Coordonnées : ${candidate.latitude}, ${candidate.longitude}`;
+        coordinates.textContent = `Coordonnées : ${formatCoordinate(candidate.latitude)}, ` +
+            formatCoordinate(candidate.longitude);
         const components = document.createElement("p");
         components.textContent = `Composants : ${componentLabel(candidate) || "Non renseignés"}`;
         const provenance = document.createElement("p");
@@ -83,9 +85,10 @@ function candidateResults(candidates, onSelect) {
     return container;
 }
 
-function editSection(entry, enrichment, onSave, onValidate) {
+function editSection(entry, enrichment, state, onSave, onValidate) {
     const details = document.createElement("details");
     details.className = "places-workbench-geography-subsection";
+    details.open = state.editOpen;
     const summary = document.createElement("summary");
     summary.textContent = "Modifier l’enrichissement géographique";
     details.appendChild(summary);
@@ -197,6 +200,10 @@ function provenanceLabel(candidate) {
         candidate.rank_confidence !== null && candidate.rank_confidence !== undefined &&
             `confiance fournisseur : ${candidate.rank_confidence}`,
     ].filter(Boolean).join(" · ") || "Geoapify";
+}
+
+function formatCoordinate(value) {
+    return Number(value).toFixed(6);
 }
 
 function button(label, handler) {

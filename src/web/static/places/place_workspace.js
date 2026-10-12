@@ -3,12 +3,12 @@ import {
     searchGeocodingCandidates, selectGeoapifyCandidate, validatePlaceEnrichment,
     confirmAdministrativeMatch, submitAdministrativeReview, searchCog,
     selectAdministrativeReference, deleteAdministrativeReference,
-} from "./place_api.js";
-import {renderPlaceDetail} from "./place_detail.js";
-import {createAdministrationUiState} from "./place_administration.js";
-import {createGeographyUiState} from "./place_geography.js";
-import {historicalProposalKey} from "./historical_reconciliation.js";
-import {renderPlaceList, visibleEntries} from "./place_list.js";
+} from "./place_api.js?v=20261012";
+import {renderPlaceDetail} from "./place_detail.js?v=20261012";
+import {createAdministrationUiState} from "./place_administration.js?v=20261012";
+import {createGeographyUiState} from "./place_geography.js?v=20261012";
+import {historicalProposalKey} from "./historical_reconciliation.js?v=20261012";
+import {renderPlaceList, visibleEntries} from "./place_list.js?v=20261012";
 
 export function createPlacesWorkspace({appUrl}) {
     const elements = {
@@ -27,6 +27,7 @@ export function createPlacesWorkspace({appUrl}) {
         skippedHistoricalProposals: new Set(), showSkippedHistoricalProposals: false,
         geography: createGeographyUiState(),
         administration: createAdministrationUiState(),
+        detail: {advancedOpen: false},
     };
 
     function visible() {
@@ -39,7 +40,7 @@ export function createPlacesWorkspace({appUrl}) {
         renderPlaceList(elements.list, entries, state.selectedOriginalName, select);
         renderPlaceDetail(elements.detail, entries.find(
             entry => entry.original_name === state.selectedOriginalName,
-        ), historicalActions(), geographyActions(), administrationActions());
+        ), historicalActions(), geographyActions(), administrationActions(), detailActions());
         const index = entries.findIndex(
             entry => entry.original_name === state.selectedOriginalName,
         );
@@ -49,13 +50,15 @@ export function createPlacesWorkspace({appUrl}) {
     }
 
     function ensureVisibleSelection(entries) {
+        let selected = state.selectedOriginalName;
         if (entries.length === 1) {
-            state.selectedOriginalName = entries[0].original_name;
+            selected = entries[0].original_name;
         } else if (!entries.some(entry =>
-            entry.original_name === state.selectedOriginalName,
+            entry.original_name === selected,
         )) {
-            state.selectedOriginalName = entries[0]?.original_name || null;
+            selected = entries[0]?.original_name || null;
         }
+        setSelected(selected);
     }
 
     function historicalActions() {
@@ -131,9 +134,32 @@ export function createPlacesWorkspace({appUrl}) {
         };
     }
 
+    function detailActions() {
+        return {
+            advancedOpen: state.detail.advancedOpen,
+            onAdvancedToggle: open => { state.detail.advancedOpen = open; },
+            onOpenTool: target => {
+                state.detail.advancedOpen = true;
+                if (target === "geography-search") state.geography.searchOpen = true;
+                if (target === "geography-edit") state.geography.editOpen = true;
+                if (target === "administration") state.administration.open = true;
+                render();
+            },
+        };
+    }
+
     function select(originalName) {
-        state.selectedOriginalName = originalName;
+        setSelected(originalName);
         render();
+    }
+
+    function setSelected(originalName) {
+        if (state.selectedOriginalName === originalName) return;
+        state.selectedOriginalName = originalName;
+        state.detail.advancedOpen = false;
+        state.geography.searchOpen = false;
+        state.geography.editOpen = false;
+        state.administration.open = false;
     }
 
     function navigate(offset) {

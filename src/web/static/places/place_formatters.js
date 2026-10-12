@@ -23,6 +23,10 @@ const warnings = {
     ADMINISTRATIVE_REFERENCE_OBSOLETE: "Référence administrative à revoir",
 };
 
+const nonBlockingValidatedGeographyWarnings = new Set([
+    "NO_STRUCTURED_GEOGRAPHIC_REFERENCE",
+]);
+
 const historicalReasons = {
     NORMALIZED_FULL_LABEL_MATCH: "Libellés complets rapprochés",
     LOCALITY_MATCH: "Localité identique",
@@ -122,6 +126,80 @@ export function presentationLabel(entry) {
         entry.presentation.generated_from;
 }
 
+export function presentationOriginLabel(entry) {
+    if (entry.presentation.generated_from === "ADMINISTRATIVE_REFERENCE") {
+        return "Rattachement administratif confirmé";
+    }
+    return "Libellé GEDCOM conservé";
+}
+
+export function coordinatesLabel(latitude, longitude) {
+    if (latitude === null || longitude === null) return "Non renseignées";
+    return `${Number(latitude).toFixed(6)}, ${Number(longitude).toFixed(6)}`;
+}
+
+export function locationSourceLabel(enrichment) {
+    if (!enrichment?.source) return "Saisie locale";
+    if (enrichment.source === "geoapify") return "Sélection Geoapify";
+    return enrichment.source;
+}
+
+export function hasActionablePresentationWarning(entry) {
+    return entry.presentation.warnings.some(warning => !(
+        entry.geography.state === "VALIDATED" &&
+        nonBlockingValidatedGeographyWarnings.has(warning)
+    ));
+}
+
+export function hasConfirmedCurrentAdministration(entry) {
+    return !entry.administration.applicable || (
+        entry.administration.reference?.status === "CONFIRMED" &&
+        entry.administration.reference_is_current
+    );
+}
+
+export function placeProgress(entry) {
+    const actions = [];
+    const enrichment = entry.geography.enrichment;
+    const coordinatesMissing = !enrichment || enrichment.latitude === null ||
+        enrichment.longitude === null;
+    const historical = entry.historical_reconciliation;
+    const historicalAvailable = historical?.proposals?.length > 0 &&
+        ["STRONG_MATCH", "REVIEW"].includes(historical.classification);
+
+    if (coordinatesMissing) {
+        actions.push(historicalAvailable
+            ? {target: "historical", label: "Examiner l’ancienne localisation"}
+            : {target: "geography-search", label: "Rechercher une localisation"});
+    } else if (entry.geography.state === "MANUAL") {
+        actions.push({target: "geography-edit", label: "Valider la localisation"});
+    }
+
+    if (entry.administration.applicable && !hasConfirmedCurrentAdministration(entry)) {
+        actions.push({target: "administration", label: "Examiner le rattachement"});
+    }
+
+    if (actions.length === 0 && entry.geography.state === "VALIDATED" &&
+        hasConfirmedCurrentAdministration(entry) &&
+        !hasActionablePresentationWarning(entry)) {
+        return {
+            label: "Lieu traité — localisation validée",
+            detail: "Aucune action nécessaire.",
+            actions,
+            treated: true,
+        };
+    }
+
+    return {
+        label: actions.length > 1 ? `${actions.length} actions à réaliser` :
+            "Une action à réaliser",
+        detail: actions.map(action => action.label).join(" · ") ||
+            "Informations à examiner.",
+        actions,
+        treated: false,
+    };
+}
+
 export function warningLabel(warning) {
     return warnings[warning] || "Information à vérifier";
 }
@@ -152,6 +230,14 @@ export function cogLocationLabel(reference) {
 
 export function eventCountsLabel(eventCounts) {
     return Object.entries(eventCounts)
-        .map(([type, count]) => `${type} : ${count}`)
+        .map(([type, count]) => `${eventTypeLabel(type)} : ${count}`)
         .join(" · ");
+}
+
+function eventTypeLabel(type) {
+    return {
+        BIRT: "Naissance",
+        DEAT: "Décès",
+        MARR: "Mariage",
+    }[type] || type;
 }

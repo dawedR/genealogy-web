@@ -1,9 +1,8 @@
 import {
-    administrationLabel,
-    geographyLabel,
-    historicalLabel,
-    presentationLabel,
-} from "./place_formatters.js";
+    hasActionablePresentationWarning,
+    hasConfirmedCurrentAdministration,
+    placeProgress,
+} from "./place_formatters.js?v=20261012";
 
 export function visibleEntries(entries, {query, filter, sort}) {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -35,10 +34,7 @@ export function renderPlaceList(container, entries, selectedOriginalName, onSele
         occurrence.textContent = `${entry.occurrences_count} occurrence(s)`;
         const states = document.createElement("span");
         states.className = "places-workbench-entry-states";
-        states.textContent = [
-            geographyLabel(entry), administrationLabel(entry),
-            historicalLabel(entry), presentationLabel(entry),
-        ].join(" · ");
+        states.textContent = placeProgress(entry).label;
         button.append(title, occurrence, states);
         button.addEventListener("click", () => onSelect(entry.original_name));
         item.appendChild(button);
@@ -47,18 +43,14 @@ export function renderPlaceList(container, entries, selectedOriginalName, onSele
 }
 
 function matchesFilter(entry, filter) {
-    const completed = entry.geography.state === "VALIDATED" &&
-        (!entry.administration.applicable ||
-            (entry.administration.reference?.status === "CONFIRMED" &&
-                entry.administration.reference_is_current)) &&
-        entry.presentation.warnings.length === 0;
+    const completed = placeProgress(entry).treated;
     const toVerify = entry.geography.state === "MANUAL" ||
         ["REVIEW", "AMBIGUOUS"].includes(
             entry.administration.diagnostic_classification,
         ) ||
         ["REVIEW", "AMBIGUOUS"].includes(
             entry.historical_reconciliation?.classification,
-        ) || entry.presentation.warnings.length > 0;
+        ) || hasActionablePresentationWarning(entry);
     switch (filter) {
     case "TO_PROCESS": return !completed;
     case "TO_VERIFY": return toVerify;
@@ -69,7 +61,7 @@ function matchesFilter(entry, filter) {
             entry.geography.enrichment.longitude === null;
     case "COG_TO_CONFIRM":
         return entry.administration.applicable &&
-            !entry.administration.reference_is_current &&
+            !hasConfirmedCurrentAdministration(entry) &&
             ["MATCHED", "REVIEW"].includes(
                 entry.administration.diagnostic_classification,
             );
@@ -88,14 +80,13 @@ function comparator(sort) {
 }
 
 function priority(entry) {
-    if (["STRONG_MATCH", "REVIEW"].includes(
-        entry.historical_reconciliation?.classification,
-    )) return 0;
-    if (entry.administration.applicable && !entry.administration.reference_is_current &&
-        ["MATCHED", "REVIEW"].includes(entry.administration.diagnostic_classification)) return 1;
-    if (entry.geography.enrichment === null) return 2;
-    if (entry.geography.state === "MANUAL") return 3;
-    return 4;
+    const target = placeProgress(entry).actions[0]?.target;
+    return {
+        historical: 0,
+        "geography-search": 1,
+        "geography-edit": 2,
+        administration: 3,
+    }[target] ?? 4;
 }
 
 function alphabetical(left, right) {

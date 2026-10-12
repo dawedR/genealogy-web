@@ -174,6 +174,15 @@ class _ProxyRootPathStaticFiles(StaticFiles):
         return super().get_path(scope)
 
 
+class _NoCacheStaticFiles(_ProxyRootPathStaticFiles):
+    """Serve application assets with revalidation for mutable module URLs."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def _has_path_prefix(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(f"{prefix}/")
 
@@ -402,7 +411,7 @@ def create_app(
 
     app.mount(
         "/static",
-        _ProxyRootPathStaticFiles(directory=web_root),
+        _NoCacheStaticFiles(directory=web_root),
         name="static",
     )
     app.mount(

@@ -1,4 +1,4 @@
-import {cogLocationLabel, cogReasonLabel, cogWarningLabel} from "./place_formatters.js";
+import {cogLocationLabel, cogReasonLabel, cogWarningLabel} from "./place_formatters.js?v=20261012";
 
 export function createAdministrationUiState() {
     return {

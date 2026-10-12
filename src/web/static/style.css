@@ -335,6 +335,39 @@ button {
     gap: 0.75rem;
 }
 
+.places-workbench-progress {
+    padding: 0.75rem;
+    border: 1px solid #c6d9e8;
+    border-radius: 6px;
+    background: #f7fbff;
+}
+
+.places-workbench-progress h3,
+.places-workbench-progress p {
+    margin: 0;
+}
+
+.places-workbench-progress p + p {
+    margin-top: 0.35rem;
+}
+
+.places-workbench-progress-treated {
+    color: #176337;
+    font-weight: 700;
+}
+
+.places-workbench-progress-pending {
+    color: #7a4d00;
+    font-weight: 700;
+}
+
+.places-workbench-primary-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.7rem;
+}
+
 .places-workbench-detail-section {
     margin: 0;
     padding: 0;
@@ -371,6 +404,33 @@ button {
 .places-workbench-detail-section dd {
     margin: 0;
     overflow-wrap: anywhere;
+}
+
+.places-workbench-advanced {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+.places-workbench-advanced > summary {
+    cursor: pointer;
+    padding: 0.7rem;
+    font-weight: 600;
+}
+
+.places-workbench-advanced-content {
+    display: grid;
+    gap: 0.9rem;
+    padding: 0 0.7rem 0.7rem;
+}
+
+.places-workbench-tool-section {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.places-workbench-tool-section h4 {
+    margin: 0;
+    font-size: 0.95rem;
 }
 
 .places-workbench-historical {
