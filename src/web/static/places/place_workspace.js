@@ -3,12 +3,12 @@ import {
     searchGeocodingCandidates, selectGeoapifyCandidate, validatePlaceEnrichment,
     confirmAdministrativeMatch, submitAdministrativeReview, searchCog,
     selectAdministrativeReference, deleteAdministrativeReference,
-} from "./place_api.js?v=20261012";
-import {renderPlaceDetail} from "./place_detail.js?v=20261012";
-import {createAdministrationUiState} from "./place_administration.js?v=20261012";
-import {createGeographyUiState} from "./place_geography.js?v=20261012";
-import {historicalProposalKey} from "./historical_reconciliation.js?v=20261012";
-import {renderPlaceList, visibleEntries} from "./place_list.js?v=20261012";
+} from "./place_api.js";
+import {renderPlaceDetail} from "./place_detail.js";
+import {createAdministrationUiState} from "./place_administration.js";
+import {createGeographyUiState} from "./place_geography.js";
+import {historicalProposalKey} from "./historical_reconciliation.js";
+import {renderPlaceList, visibleEntries} from "./place_list.js";
 
 export function createPlacesWorkspace({appUrl}) {
     const elements = {
@@ -28,6 +28,7 @@ export function createPlacesWorkspace({appUrl}) {
         geography: createGeographyUiState(),
         administration: createAdministrationUiState(),
         detail: {advancedOpen: false},
+        mapPoint: null,
     };
 
     function visible() {
@@ -38,9 +39,13 @@ export function createPlacesWorkspace({appUrl}) {
         const entries = visible();
         ensureVisibleSelection(entries);
         renderPlaceList(elements.list, entries, state.selectedOriginalName, select);
-        renderPlaceDetail(elements.detail, entries.find(
+        const selectedEntry = entries.find(
             entry => entry.original_name === state.selectedOriginalName,
-        ), historicalActions(), geographyActions(), administrationActions(), detailActions());
+        );
+        renderPlaceDetail(
+            elements.detail, selectedEntry, historicalActions(), geographyActions(),
+            administrationActions(), detailActions(selectedEntry),
+        );
         const index = entries.findIndex(
             entry => entry.original_name === state.selectedOriginalName,
         );
@@ -79,6 +84,15 @@ export function createPlacesWorkspace({appUrl}) {
                     !state.showSkippedHistoricalProposals;
                 render();
             },
+            onPreview: proposal => {
+                state.mapPoint = historicalMapPoint(proposal);
+                render();
+            },
+            onSearchAlternative: () => {
+                state.detail.advancedOpen = true;
+                state.geography.searchOpen = true;
+                render();
+            },
         };
     }
 
@@ -87,6 +101,10 @@ export function createPlacesWorkspace({appUrl}) {
             state: state.geography,
             onSearch: (originalName, query) => { void search(originalName, query); },
             onSelect: candidateToken => { void selectCandidate(candidateToken); },
+            onPreview: candidate => {
+                state.mapPoint = candidateMapPoint(candidate);
+                render();
+            },
             onSave: (payload, validationError) => {
                 if (validationError) {
                     state.geography.message = validationError;
@@ -96,6 +114,15 @@ export function createPlacesWorkspace({appUrl}) {
                 }
             },
             onValidate: originalName => { void validate(originalName); },
+            onEdit: () => {
+                state.geography.editOpen = true;
+                render();
+            },
+            onCancelEdit: () => {
+                state.geography.editOpen = false;
+                state.geography.message = null;
+                render();
+            },
         };
     }
 
@@ -134,12 +161,15 @@ export function createPlacesWorkspace({appUrl}) {
         };
     }
 
-    function detailActions() {
+    function detailActions(entry) {
         return {
             advancedOpen: state.detail.advancedOpen,
+            appUrl,
+            mapPoint: selectedMapPoint(entry),
             onAdvancedToggle: open => { state.detail.advancedOpen = open; },
             onOpenTool: target => {
                 state.detail.advancedOpen = true;
+                if (target === "historical") previewFirstHistoricalProposal();
                 if (target === "geography-search") state.geography.searchOpen = true;
                 if (target === "geography-edit") state.geography.editOpen = true;
                 if (target === "administration") state.administration.open = true;
@@ -160,6 +190,57 @@ export function createPlacesWorkspace({appUrl}) {
         state.geography.searchOpen = false;
         state.geography.editOpen = false;
         state.administration.open = false;
+        state.mapPoint = null;
+    }
+
+    function selectedMapPoint(entry) {
+        if (state.mapPoint?.originalName === state.selectedOriginalName) return state.mapPoint;
+        const enrichment = entry?.geography.enrichment;
+        if (enrichment?.latitude !== null && enrichment?.longitude !== null && enrichment) {
+            return {
+                originalName: entry.original_name,
+                title: "Position enregistrée",
+                name: enrichment.normalized_name || entry.original_name,
+                latitude: enrichment.latitude,
+                longitude: enrichment.longitude,
+            };
+        }
+        const proposal = entry?.historical_reconciliation?.proposals.find(item =>
+            item.latitude !== null && item.longitude !== null,
+        );
+        return proposal ? historicalMapPoint(proposal) : null;
+    }
+
+    function previewFirstHistoricalProposal() {
+        const entry = visible().find(item => item.original_name === state.selectedOriginalName);
+        const proposal = entry?.historical_reconciliation?.proposals.find(item =>
+            item.latitude !== null && item.longitude !== null,
+        );
+        if (proposal) state.mapPoint = historicalMapPoint(proposal);
+    }
+
+    function historicalMapPoint(proposal) {
+        return {
+            originalName: proposal.source_original_name,
+            title: `Position proposée pour ${placeName(proposal.source_original_name)}`,
+            name: proposal.historical_normalized_name || proposal.historical_original_name,
+            latitude: proposal.latitude,
+            longitude: proposal.longitude,
+        };
+    }
+
+    function candidateMapPoint(candidate) {
+        return {
+            originalName: state.selectedOriginalName,
+            title: "Position Geoapify examinée",
+            name: candidate.display_name,
+            latitude: candidate.latitude,
+            longitude: candidate.longitude,
+        };
+    }
+
+    function placeName(originalName) {
+        return originalName.split(",", 1)[0].replace(/^\?\s*/, "").trim();
     }
 
     function navigate(offset) {
@@ -194,6 +275,7 @@ export function createPlacesWorkspace({appUrl}) {
         try {
             await reuseHistoricalProposal(appUrl, proposal);
             if (serial !== state.operationSerial) return;
+            state.mapPoint = null;
             await refresh();
             if (serial === state.operationSerial) {
                 elements.status.textContent = "Enrichissement historique réutilisé : à valider.";
@@ -239,7 +321,9 @@ export function createPlacesWorkspace({appUrl}) {
         if (!payload) return;
         await write(
             () => savePlaceEnrichment(appUrl, payload),
-            "Enrichissement enregistré.",
+            enrichment => enrichment.status === "MANUAL"
+                ? "Modifications enregistrées — position à confirmer."
+                : "Modifications enregistrées.",
         );
     }
 
@@ -254,13 +338,17 @@ export function createPlacesWorkspace({appUrl}) {
         const serial = ++state.operationSerial;
         elements.status.textContent = "Enregistrement…";
         try {
-            await action();
+            const result = await action();
             if (serial !== state.operationSerial) return;
+            state.mapPoint = null;
             state.geography.candidates = null;
             state.geography.message = null;
+            state.geography.editOpen = false;
             await refresh();
             if (serial === state.operationSerial) {
-                elements.status.textContent = successMessage;
+                elements.status.textContent = typeof successMessage === "function"
+                    ? successMessage(result)
+                    : successMessage;
             }
         } catch (error) {
             if (serial === state.operationSerial) {

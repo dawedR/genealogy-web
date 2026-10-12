@@ -5,7 +5,9 @@ export function createGeographyUiState() {
     };
 }
 
-export function renderGeographyEditor({entry, state, onSearch, onSelect, onSave, onValidate}) {
+export function renderGeographyEditor({
+    entry, state, onSearch, onSelect, onPreview, onSave, onValidate, onEdit, onCancelEdit,
+}) {
     if (state.originalName !== entry.original_name) {
         state.originalName = entry.original_name;
         state.query = entry.original_name;
@@ -24,13 +26,13 @@ export function renderGeographyEditor({entry, state, onSearch, onSelect, onSave,
         container.appendChild(message);
     }
     container.append(
-        searchSection(entry, state, onSearch, onSelect),
-        editSection(entry, enrichment, state, onSave, onValidate),
+        searchSection(entry, state, onSearch, onSelect, onPreview),
+        editSection(entry, enrichment, state, onSave, onValidate, onEdit, onCancelEdit),
     );
     return container;
 }
 
-function searchSection(entry, state, onSearch, onSelect) {
+function searchSection(entry, state, onSearch, onSelect, onPreview) {
     const details = document.createElement("details");
     details.className = "places-workbench-geography-subsection";
     details.open = state.searchOpen;
@@ -52,13 +54,13 @@ function searchSection(entry, state, onSearch, onSelect) {
     });
     content.append(label, search);
     if (state.candidates !== null) {
-        content.appendChild(candidateResults(state.candidates, onSelect));
+        content.appendChild(candidateResults(state.candidates, onSelect, onPreview));
     }
     details.appendChild(content);
     return details;
 }
 
-function candidateResults(candidates, onSelect) {
+function candidateResults(candidates, onSelect, onPreview) {
     const container = document.createElement("div");
     container.className = "places-workbench-geocoding-candidates";
     if (candidates.length === 0) {
@@ -78,6 +80,7 @@ function candidateResults(candidates, onSelect) {
         const provenance = document.createElement("p");
         provenance.textContent = `Provenance : ${provenanceLabel(candidate)}`;
         item.append(title, coordinates, components, provenance,
+            button("Voir sur la carte", () => onPreview(candidate)),
             button("Choisir ce candidat", () => onSelect(candidate.selection_token)));
         list.appendChild(item);
     }
@@ -85,13 +88,21 @@ function candidateResults(candidates, onSelect) {
     return container;
 }
 
-function editSection(entry, enrichment, state, onSave, onValidate) {
-    const details = document.createElement("details");
-    details.className = "places-workbench-geography-subsection";
-    details.open = state.editOpen;
-    const summary = document.createElement("summary");
-    summary.textContent = "Modifier l’enrichissement géographique";
-    details.appendChild(summary);
+function editSection(entry, enrichment, state, onSave, onValidate, onEdit, onCancelEdit) {
+    const section = document.createElement("section");
+    section.className = "places-workbench-geography-subsection";
+    if (!state.editOpen) {
+        section.appendChild(button(
+            enrichment ? "Modifier la position" : "Saisir une position manuellement",
+            onEdit,
+        ));
+        if (enrichment?.status !== "VALIDATED") {
+            section.appendChild(button(
+                "Valider cette position", () => onValidate(entry.original_name),
+            ));
+        }
+        return section;
+    }
     const form = document.createElement("form");
     form.className = "places-workbench-geography-content";
     const normalizedName = textInput("Nom normalisé", enrichment?.normalized_name || "");
@@ -104,14 +115,25 @@ function editSection(entry, enrichment, state, onSave, onValidate) {
     }
     const actions = document.createElement("div");
     actions.className = "places-workbench-geography-actions";
-    const save = button("Enregistrer", () => form.requestSubmit());
-    actions.appendChild(save);
-    if (enrichment) {
-        const validate = button("Valider ce lieu", () => onValidate(entry.original_name));
-        validate.disabled = enrichment.status === "VALIDATED";
-        actions.appendChild(validate);
-    }
+    const save = button("Enregistrer les modifications", () => form.requestSubmit());
+    save.disabled = true;
+    const cancel = button("Annuler", onCancelEdit);
+    actions.append(save, cancel);
     form.appendChild(actions);
+    const initial = formPayload(entry.original_name, enrichment);
+    const updateSaveState = () => {
+        save.disabled = samePayload(initial, formPayload(
+            entry.original_name, {
+                normalized_name: normalizedName.input.value,
+                latitude: coordinateValue(latitude.input),
+                longitude: coordinateValue(longitude.input),
+                comment: comment.input.value,
+            },
+        ));
+    };
+    for (const input of (normalizedName.input, latitude.input, longitude.input, comment.input)) {
+        input.addEventListener("input", updateSaveState);
+    }
     form.addEventListener("submit", event => {
         event.preventDefault();
         const latitudeValue = optionalCoordinate(latitude.input);
@@ -120,16 +142,15 @@ function editSection(entry, enrichment, state, onSave, onValidate) {
             onSave(null, "Coordonnée invalide.");
             return;
         }
-        onSave({
-            original_name: entry.original_name,
-            normalized_name: emptyToNull(normalizedName.input.value),
+        onSave(formPayload(entry.original_name, {
+            normalized_name: normalizedName.input.value,
             latitude: latitudeValue,
             longitude: longitudeValue,
-            comment: emptyToNull(comment.input.value),
-        });
+            comment: comment.input.value,
+        }));
     });
-    details.appendChild(form);
-    return details;
+    section.appendChild(form);
+    return section;
 }
 
 function geographicReference(enrichment) {
@@ -171,6 +192,28 @@ function optionalCoordinate(input) {
     if (input.value.trim() === "") return null;
     const value = Number(input.value);
     return Number.isFinite(value) ? value : undefined;
+}
+
+function coordinateValue(input) {
+    return input.value.trim() === "" ? null : input.value;
+}
+
+function formPayload(originalName, values) {
+    return {
+        original_name: originalName,
+        normalized_name: emptyToNull(values.normalized_name ?? ""),
+        latitude: values.latitude === null || values.latitude === "" ? null : Number(values.latitude),
+        longitude: values.longitude === null || values.longitude === "" ? null : Number(values.longitude),
+        comment: emptyToNull(values.comment ?? ""),
+    };
+}
+
+function samePayload(left, right) {
+    return left.original_name === right.original_name &&
+        left.normalized_name === right.normalized_name &&
+        left.latitude === right.latitude &&
+        left.longitude === right.longitude &&
+        left.comment === right.comment;
 }
 
 function emptyToNull(value) {

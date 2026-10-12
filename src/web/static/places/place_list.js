@@ -2,7 +2,7 @@ import {
     hasActionablePresentationWarning,
     hasConfirmedCurrentAdministration,
     placeProgress,
-} from "./place_formatters.js?v=20261012";
+} from "./place_formatters.js";
 
 export function visibleEntries(entries, {query, filter, sort}) {
     const normalizedQuery = query.trim().toLocaleLowerCase();

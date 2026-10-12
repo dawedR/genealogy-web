@@ -110,12 +110,15 @@ def test_public_root_path_serves_pages_assets_api_and_fallback_portraits(
             client.get(f"{public_prefix}/static/style.css"),
             client.get(f"{public_prefix}/static/app.js"),
             client.get(f"{public_prefix}/static/places/place_workspace.js"),
+            client.get(f"{public_prefix}/static/places/place_map.js"),
             client.get(f"{public_prefix}/static/places/historical_reconciliation.js"),
             client.get(f"{public_prefix}/static/places/place_geography.js"),
             client.get(f"{public_prefix}/static/places/place_administration.js"),
             client.get(f"{public_prefix}/static/tree_view.js"),
             client.get(f"{public_prefix}/static/fan_view.js"),
             client.get(f"{public_prefix}/static/portraits/fallback-male.png"),
+            client.get(f"{public_prefix}/static/vendor/leaflet-1.9.4/leaflet.js"),
+            client.get(f"{public_prefix}/static/vendor/leaflet-1.9.4/leaflet.css"),
             client.get(f"{public_prefix}/app-config.js"),
         ]
 
@@ -123,7 +126,7 @@ def test_public_root_path_serves_pages_assets_api_and_fallback_portraits(
     assert tree_view.status_code == 200
     assert fan_view.status_code == 200
     assert all(response.status_code == 200 for response in responses)
-    assert all(response.headers["cache-control"] == "no-cache" for response in responses[4:13])
+    assert all(response.headers["cache-control"] == "no-cache" for response in responses[4:-1])
     assert 'href="./static/style.css"' in index.text
     assert 'src="./app-config.js"' in index.text
     assert 'src="./app-config.js"' in tree_view.text
@@ -1377,7 +1380,8 @@ def test_static_javascript():
     assert "loadAncestry" not in response.text
     assert "loadGedcomStatus" in response.text
     assert "refreshPlacesWorkspace" in response.text
-    assert 'import("./places/place_workspace.js?v=20261012")' in response.text
+    assert 'import("./places/place_workspace.js")' in response.text
+    assert "?v=20261012" not in response.text
     for removed_symbol in (
         "loadPlaces", "selectPlace", "loadHistoricalReconciliation",
         "loadAdministrativeReferences", "renderGeocodingCandidates",
@@ -1460,7 +1464,7 @@ def test_places_workbench_historical_reconciliation_keeps_server_authority_and_s
     assert "historicalReasonLabel" in reconciliation.text
     assert "historicalWarningLabel" in reconciliation.text
     assert "Revoir les propositions passées" in reconciliation.text
-    assert "Réutiliser" in reconciliation.text
+    assert "Reprendre cette position" in reconciliation.text
     assert "Passer" in reconciliation.text
 
 
@@ -1492,14 +1496,36 @@ def test_places_workbench_geography_uses_existing_secure_api_workflows():
     assert "latitude:" not in selection
     assert "longitude:" not in selection
     assert "Rechercher avec Geoapify" in geography.text
-    assert "Modifier l’enrichissement géographique" in geography.text
+    assert "Modifier la position" in geography.text
+    assert "Saisir une position manuellement" in geography.text
     assert "Choisir ce candidat" in geography.text
-    assert "Enregistrer" in geography.text
-    assert "Valider ce lieu" in geography.text
+    assert "Enregistrer les modifications" in geography.text
+    assert "Valider cette position" in geography.text
+    assert "Annuler" in geography.text
+    assert "save.disabled = true;" in geography.text
+    assert "input.addEventListener(\"input\", updateSaveState);" in geography.text
+    assert "samePayload(initial" in geography.text
     assert "Les coordonnées actives ont été modifiées manuellement." in geography.text
     assert "Aucun candidat trouvé." in geography.text
     assert "Number(value).toFixed(6)" in geography.text
     assert geography.text.count('form.addEventListener("submit"') == 1
+
+
+def test_places_workbench_geography_keeps_existing_enrichments_read_only_until_edited():
+    with make_client() as client:
+        geography = client.get("/static/places/place_geography.js")
+        workspace = client.get("/static/places/place_workspace.js")
+
+    assert geography.status_code == 200
+    assert workspace.status_code == 200
+    assert 'if (!state.editOpen)' in geography.text
+    assert 'enrichment ? "Modifier la position" : "Saisir une position manuellement"' in geography.text
+    assert 'enrichment?.status !== "VALIDATED"' in geography.text
+    assert '"Valider cette position"' in geography.text
+    assert 'const cancel = button("Annuler", onCancelEdit);' in geography.text
+    assert 'enrichment => enrichment.status === "MANUAL"' in workspace.text
+    assert '"Modifications enregistrées — position à confirmer."' in workspace.text
+    assert "state.geography.editOpen = false;" in workspace.text
 
 
 def test_places_workbench_simplifies_the_detail_without_changing_workflows():
@@ -1522,11 +1548,100 @@ def test_places_workbench_simplifies_the_detail_without_changing_workflows():
     assert "renderGeographyEditor" in detail.text
     assert "renderAdministrationEditor" in detail.text
     assert "state.detail.advancedOpen = true;" in workspace.text
-    assert 'target === "historical"' not in workspace.text
+    assert 'target === "historical"' in workspace.text
     assert 'target === "geography-search"' in workspace.text
     assert 'target === "geography-edit"' in workspace.text
     assert 'target === "administration"' in workspace.text
     assert "placeProgress(entry).treated" in listing.text
+
+
+def test_places_workbench_map_is_local_read_only_and_root_path_aware():
+    with make_client() as client:
+        place_map = client.get("/static/places/place_map.js")
+        leaflet = client.get("/static/vendor/leaflet-1.9.4/leaflet.js")
+        stylesheet = client.get("/static/vendor/leaflet-1.9.4/leaflet.css")
+        license_file = client.get("/static/vendor/leaflet-1.9.4/LICENSE")
+        workspace = client.get("/static/places/place_workspace.js")
+        historical = client.get("/static/places/historical_reconciliation.js")
+        geography = client.get("/static/places/place_geography.js")
+
+    assert all(response.status_code == 200 for response in (
+        place_map, leaflet, stylesheet, license_file, workspace, historical, geography,
+    ))
+    assert all(response.headers["cache-control"] == "no-cache" for response in (
+        place_map, leaflet, stylesheet, license_file,
+    ))
+    assert "BSD 2-Clause License" in license_file.text
+    assert 'appUrl(`${LEAFLET_ROOT}/leaflet.css`)' in place_map.text
+    assert 'appUrl(`${LEAFLET_ROOT}/leaflet.js`)' in place_map.text
+    assert "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" in place_map.text
+    assert "OpenStreetMap contributors" in place_map.text
+    assert "draggable: false" in place_map.text
+    assert "bindPopup(popupContent(point))" in place_map.text
+    assert "bindTooltip" not in place_map.text
+    assert "ResizeObserver" in place_map.text
+    assert "invalidateSize" in place_map.text
+    assert "tileerror" in place_map.text
+    assert "destroyPlaceMap" in place_map.text
+    assert "Position proposée pour" in workspace.text
+    assert "const proposal = entry?.historical_reconciliation?.proposals.find" in workspace.text
+    assert "return proposal ? historicalMapPoint(proposal) : null;" in workspace.text
+    assert "state.mapPoint = null;" in workspace.text
+    assert "Reprendre cette position" in historical.text
+    assert "Rechercher une autre position" in historical.text
+    assert "Voir sur la carte" in historical.text
+    assert "Voir sur la carte" in geography.text
+    assert "candidate.selection_token" in geography.text
+
+
+def test_places_modules_use_relative_imports_without_a_fixed_revision():
+    module_paths = (
+        "/static/app.js",
+        "/static/places/place_workspace.js",
+        "/static/places/place_detail.js",
+        "/static/places/historical_reconciliation.js",
+        "/static/places/place_geography.js",
+        "/static/places/place_administration.js",
+        "/static/places/place_list.js",
+    )
+    with TestClient(create_app(make_genealogy(), root_path="/genealogy")) as client:
+        responses = [client.get(path) for path in module_paths]
+
+    assert all(response.status_code == 200 for response in responses)
+    assert all(response.headers["cache-control"] == "no-cache" for response in responses)
+    assert all("?v=20261012" not in response.text for response in responses)
+    assert 'import("./places/place_workspace.js")' in responses[0].text
+    assert 'from "./place_map.js"' in responses[2].text
+    assert 'from "./place_formatters.js"' in responses[3].text
+
+
+def test_workbench_exposes_chaneac_historical_coordinates_without_writing():
+    source_name = "Chanéac, 07054, Ardèche, Auvergne-Rhône-Alpes, France"
+    historical_name = "Chanéac, 07310, Ardèche, Auvergne-Rhône-Alpes, France"
+    genealogy = Genealogy(persons={
+        "@I1@": Person(id="@I1@", events=[
+            Event(type="BIRT", place=Place(original_name=source_name)),
+        ]),
+    })
+    store = InMemoryPlaceEnrichmentStore()
+    store.save(PlaceEnrichment(
+        original_name=historical_name,
+        normalized_name="07310 Chanéac, France",
+        latitude=44.917162673212815,
+        longitude=4.285819247392108,
+        status=PlaceEnrichmentStatus.VALIDATED,
+    ))
+    before = store.get_all()
+
+    with TestClient(create_app(genealogy, place_enrichment_store=store)) as client:
+        response = client.get("/places/workbench")
+
+    assert response.status_code == 200
+    proposal = response.json()[0]["historical_reconciliation"]["proposals"][0]
+    assert proposal["historical_normalized_name"] == "07310 Chanéac, France"
+    assert proposal["latitude"] == 44.917162673212815
+    assert proposal["longitude"] == 4.285819247392108
+    assert store.get_all() == before
 
 
 def test_places_workbench_administration_uses_only_server_verified_cog_identity():

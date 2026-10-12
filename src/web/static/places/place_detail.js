@@ -7,10 +7,11 @@ import {
     placeProgress,
     presentationOriginLabel,
     warningLabel,
-} from "./place_formatters.js?v=20261012";
-import {renderHistoricalProposals} from "./historical_reconciliation.js?v=20261012";
-import {renderGeographyEditor} from "./place_geography.js?v=20261012";
-import {renderAdministrationEditor} from "./place_administration.js?v=20261012";
+} from "./place_formatters.js";
+import {renderHistoricalProposals} from "./historical_reconciliation.js";
+import {renderGeographyEditor} from "./place_geography.js";
+import {renderAdministrationEditor} from "./place_administration.js";
+import {renderPlaceMap} from "./place_map.js";
 
 export function renderPlaceDetail(
     container, entry, historicalActions = null, geographyActions = null,
@@ -25,7 +26,7 @@ export function renderPlaceDetail(
     container.append(
         progressSection(progress, detailActions),
         originSection(entry),
-        locationSection(entry),
+        locationSection(entry, detailActions),
         presentationSection(entry),
         advancedSection(
             entry, historicalActions, geographyActions, administrationActions, detailActions,
@@ -68,7 +69,7 @@ function originSection(entry) {
     ]);
 }
 
-function locationSection(entry) {
+function locationSection(entry, detailActions) {
     const enrichment = entry.geography.enrichment;
     const fields = [field("État", entry.geography.state === "VALIDATED"
         ? "Localisation validée"
@@ -84,7 +85,10 @@ function locationSection(entry) {
     } else {
         fields.push(field("Coordonnées", "Aucune localisation enregistrée."));
     }
-    return section("Localisation", fields);
+    const element = section("Localisation", fields);
+    const point = detailActions?.mapPoint;
+    if (point) element.appendChild(renderPlaceMap({appUrl: detailActions.appUrl, point}));
+    return element;
 }
 
 function presentationSection(entry) {

@@ -3,7 +3,7 @@ import {
     historicalReasonLabel,
     historicalReliabilityLabel,
     historicalWarningLabel,
-} from "./place_formatters.js?v=20261012";
+} from "./place_formatters.js";
 
 export function historicalProposalKey(proposal) {
     return `${proposal.source_original_name}\u0000${proposal.historical_original_name}`;
@@ -18,6 +18,7 @@ export function historicalProposalsForEntry(entry, skipped, showSkipped) {
 
 export function renderHistoricalProposals({
     entry, skipped, showSkipped, onReuse, onSkip, onRestore, onToggleSkipped,
+    onPreview, onSearchAlternative,
 }) {
     const reconciliation = entry.historical_reconciliation;
     if (!reconciliation?.proposals.length) return null;
@@ -52,13 +53,15 @@ export function renderHistoricalProposals({
         section.appendChild(proposalElement(
             proposal,
             skipped.has(historicalProposalKey(proposal)),
-            {onReuse, onSkip, onRestore},
+            {onReuse, onSkip, onRestore, onPreview, onSearchAlternative},
         ));
     }
     return section;
 }
 
-function proposalElement(proposal, isSkipped, {onReuse, onSkip, onRestore}) {
+function proposalElement(proposal, isSkipped, {
+    onReuse, onSkip, onRestore, onPreview, onSearchAlternative,
+}) {
     const article = document.createElement("article");
     article.className = "places-workbench-historical-proposal" +
         (proposal.classification === "REVIEW" ? " is-review" : "");
@@ -76,6 +79,9 @@ function proposalElement(proposal, isSkipped, {onReuse, onSkip, onRestore}) {
         ),
         paragraph("Raisons", proposal.reasons.map(historicalReasonLabel).join(" · ") || "Aucune"),
     );
+    if (proposal.historical_status === "VALIDATED") {
+        article.appendChild(paragraph("Origine", "Validation géographique antérieure"));
+    }
     if (proposal.warnings.length) {
         const warning = paragraph(
             "À vérifier",
@@ -90,10 +96,19 @@ function proposalElement(proposal, isSkipped, {onReuse, onSkip, onRestore}) {
         const restore = button("Réafficher", () => onRestore(proposal));
         actions.appendChild(restore);
     } else {
-        const reuse = button("Réutiliser", () => onReuse(proposal));
+        if (proposal.latitude !== null && proposal.longitude !== null) {
+            actions.appendChild(button("Voir sur la carte", () => onPreview(proposal)));
+        }
+        const reuse = button("Reprendre cette position", () => onReuse(proposal));
         reuse.disabled = !["STRONG_MATCH", "REVIEW"].includes(proposal.classification);
         const skip = button("Passer", () => onSkip(proposal));
         actions.append(reuse, skip);
+        if (proposal.latitude !== null && proposal.longitude !== null) {
+            const question = document.createElement("p");
+            question.textContent = "Cette position correspond-elle au lieu de ton GEDCOM ?";
+            article.appendChild(question);
+            actions.appendChild(button("Rechercher une autre position", onSearchAlternative));
+        }
     }
     article.appendChild(actions);
     return article;
